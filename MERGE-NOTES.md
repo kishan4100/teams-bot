@@ -64,7 +64,8 @@ HR is checked by `HR_EMAIL` in `bot/env/.env.local` (currently Kishan's email).
 
 ## 3b. Current deployment (decided 2026-11-22)
 
-- **Where it runs:** on Kishan's laptop, via VS Code "Debug in Teams" (dev tunnel). It only works while the laptop is awake and the debug session is running.
+- **Where it runs:** on Kishan's laptop, via VS Code **"Run bot (upload app manually in Teams)"** (dev tunnel; skips the toolkit's sideloading check). It only works while the laptop is awake and that run is active.
+- **How Teams gets it (2026-11-23):** custom upload is still disabled for Kishan, so the app package (`bot/appPackage/build/appPackage.local.zip`) is **submitted to the org catalog** (Teams → Apps → Manage your apps → Upload an app → Submit an app to your org). The admin approves it in the Teams admin center, and it then appears under "Built for your org". Manifest changes (name, icon, commands) need re-submission and approval; code changes don't.
 - **Permanent hosting:** postponed. It needs an always-on host with HTTPS, a persistent disk and a single instance (e.g. Azure App Service with Always On, or a small VM), then an org publish with admin approval.
 - **While the laptop is off or asleep:**
   - posts and closes catch up when the bot starts again
