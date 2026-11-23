@@ -81,7 +81,7 @@ HR is checked by `HR_EMAIL` in `bot/env/.env.local` (currently Kishan's email).
 | Target group chat | `bot/data/target.json` |
 
 All are created on first write. No database is needed for one office. Person B's writes are atomic (temp file + rename).
-`poll/data/` isn't in any `.gitignore` (there's no root git repo). Add it if you start using git.
+Git: the project is in https://github.com/kishan4100/teams-bot (public). The root `.gitignore` excludes `node_modules/`, runtime data (`poll/data/`, `bot/data/`), and secrets/local settings (`bot/env/.env.local`, `bot/env/*.user`, `.localConfigs*`). After cloning, add `HR_EMAIL=...` to `bot/env/.env.local` yourself.
 
 ## 5. Verified vs not yet verified
 
