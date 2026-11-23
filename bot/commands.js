@@ -21,6 +21,7 @@ const HELP = [
   "- `start weekly poll`: post next week's attendance poll",
   "- `start friday poll`: post the Friday veg / non-veg poll",
   "- `close poll` (or `close poll weekly` / `close poll friday`): close and post results",
+  "- `reopen poll weekly` / `reopen poll friday`: reopen the last closed poll (votes are kept)",
   "- `remind` (or `remind weekly` / `remind friday`): remind people who haven't voted (@mentions them)",
   "- `set menu`: opens a box to paste the vendor's menu → preview → Confirm to post it",
   "- `show schedule`: when polls post, remind and close",
@@ -77,7 +78,7 @@ async function startPoll(context, type, args, label) {
   const pollId = `${type}-${args.weekStart || args.date}`;
   const existing = await polls.getPoll(pollId);
   if (existing && existing.status === "closed") {
-    await context.send(`The ${label} is already closed.`);
+    await context.send(`The ${label} is already closed. To open it again, send \`reopen poll ${type === "friday_diet" ? "friday" : "weekly"}\`.`);
     return;
   }
   if (existing && actions.hasPollCardInTarget(pollId)) {
@@ -315,11 +316,62 @@ async function showScheduleCmd(context) {
   await context.send(scheduleText(await polls.getSchedule()));
 }
 
+// reopen poll <weekly|friday>: latest closed poll of that kind, votes kept. Close time from the schedule;
+// if that has already passed, no auto-close (HR closes it with `close poll`).
+async function reopenPollCmd(context, which) {
+  const typeFor = { weekly: "weekly_attendance", friday: "friday_diet" };
+  if (!typeFor[which]) {
+    await context.send("Say `reopen poll weekly` or `reopen poll friday`.");
+    return;
+  }
+  const schedule = await polls.getSchedule();
+  const poll = await polls.reopenLatestPoll(typeFor[which], (p) => {
+    const closesAt = closesAtFor(p.weekStart || p.date, schedule[which].close);
+    return closesAt > nowString() ? closesAt : null;
+  });
+  if (!poll) {
+    await context.send(`There's no closed ${which} poll to reopen (the latest one is still open, or none exists).`);
+    return;
+  }
+  actions.setTarget(context);
+  try {
+    await actions.updatePollCard(poll); // flip the existing card back to open
+  } catch {
+    await actions.postPollCard(poll); // card unknown (e.g. after a restart): post a fresh one
+  }
+  const votes = Object.keys(poll.responses).length;
+  await context.send(
+    `✅ Reopened the ${which} poll (${votes} vote${votes === 1 ? "" : "s"} kept). ` +
+      (poll.closesAt
+        ? `It closes ${formatDateTime(poll.closesAt)}.`
+        : `Its scheduled close time has passed, so it stays open until you send \`close poll ${which}\`.`)
+  );
+}
+
+// A new close time also applies to the open poll of that kind (same rule as when it was created). Returns lines for HR.
+async function moveOpenCloseTimes(context, kind, closeEntry) {
+  const type = { weekly: "weekly_attendance", friday: "friday_diet" }[kind];
+  const lines = [];
+  for (const open of (await polls.getOpenPolls()).filter((p) => p.type === type)) {
+    const poll = await polls.setCloseTime(open.pollId, closesAtFor(open.weekStart || open.date, closeEntry));
+    try {
+      await actions.updatePollCard(poll); // shows the new "Closes:" time on the card
+    } catch (err) {
+      context.log.warn(`Could not refresh poll card ${poll.pollId}: ${err.message}`);
+    }
+    const passed = poll.closesAt <= nowString() ? " That time has already passed, so it will close in a moment." : "";
+    lines.push(`The open ${kind} poll now closes ${formatDateTime(poll.closesAt)}.${passed}`);
+  }
+  return lines;
+}
+
 async function setScheduleCmd(context, m) {
   const [, kind, event, day, time] = m;
   try {
-    const sch = await polls.setSchedule(kind.toLowerCase(), event.toLowerCase(), day, time);
-    await context.send(`✅ Updated. ${scheduleText(sch)}\n\nA new close time applies from the next poll, not one that's already open.`);
+    const k = kind.toLowerCase();
+    const sch = await polls.setSchedule(k, event.toLowerCase(), day, time);
+    const moved = event.toLowerCase() === "close" ? await moveOpenCloseTimes(context, k, sch[k].close) : [];
+    await context.send([`✅ Updated. ${scheduleText(sch)}`, ...moved].join("\n\n"));
   } catch (err) {
     // setSchedule throws readable messages on bad input (agreed in v3.2), so show them as-is.
     await context.send(`That didn't work: ${err.message}\nFormat: \`set schedule <weekly|friday> <post|remind|close> <day> <HH:mm>\``);
@@ -425,6 +477,7 @@ const COMMANDS = [
   { re: /^start friday poll$/i, hrOnly: true, run: startFriday },
   { re: /^remind(?:\s+(\w+))?$/i, hrOnly: true, run: (ctx, m) => remindCmd(ctx, m[1] && m[1].toLowerCase()) },
   { re: /^close poll(?:\s+(\w+))?$/i, hrOnly: true, run: (ctx, m) => closePollCmd(ctx, m[1] && m[1].toLowerCase()) },
+  { re: /^reopen poll(?:\s+(\w+))?$/i, hrOnly: true, run: (ctx, m) => reopenPollCmd(ctx, m[1] && m[1].toLowerCase()) },
 ];
 
 async function handleCommand(context, rawText) {

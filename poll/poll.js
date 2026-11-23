@@ -83,6 +83,29 @@ async function closePoll(pollId) {
   return summarize(poll); // closing twice returns same summary (votes are frozen once closed)
 }
 
+// HR reopens the most recent closed poll of a type. Votes are kept. closesAt null = no auto-close.
+// Returns the reopened poll, or null if there's no closed poll of that type.
+async function reopenLatestPoll(type, closesAtFor) {
+  const polls = load(POLLS_FILE);
+  const poll = Object.values(polls)
+    .filter((x) => x.type === type)
+    .sort((a, b) => (b.weekStart || b.date).localeCompare(a.weekStart || a.date))[0];
+  if (!poll || poll.status !== 'closed') return null; // latest is still open (or none): nothing to reopen
+  poll.status = 'open';
+  poll.closesAt = closesAtFor(poll);
+  save(POLLS_FILE, polls);
+  return poll;
+}
+
+// HR changed the close time in the schedule: move it on an open poll too. Closed polls stay closed.
+async function setCloseTime(pollId, closesAt) {
+  const polls = load(POLLS_FILE);
+  const poll = polls[pollId];
+  if (!poll) throw new Error(`Unknown poll: ${pollId}`);
+  if (poll.status === 'open') { poll.closesAt = closesAt; save(POLLS_FILE, polls); }
+  return poll;
+}
+
 async function getNonVoters(pollId, members) {
   const poll = load(POLLS_FILE)[pollId];
   if (!poll) throw new Error(`Unknown poll: ${pollId}`);
@@ -221,6 +244,6 @@ async function setSchedule(kind, event, day, time) {
 }
 
 module.exports = {
-  createPoll, recordVote, getPoll, getOpenPolls, closePoll, getNonVoters,
+  createPoll, recordVote, getPoll, getOpenPolls, closePoll, reopenLatestPoll, setCloseTime, getNonVoters,
   parseMenu, saveMenu, getMenu, setMenuWeek, getSchedule, setSchedule, TEMPLATES,
 };
