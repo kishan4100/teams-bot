@@ -1,0 +1,62 @@
+{
+    "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.30/MicrosoftTeams.schema.json",
+    "manifestVersion": "1.30",
+    "version": "1.0.0",
+    "id": "${{TEAMS_APP_ID}}",
+    "developer": {
+        "name": "My App, Inc.",
+        "websiteUrl": "https://www.example.com",
+        "privacyUrl": "https://www.example.com/privacy",
+        "termsOfUseUrl": "https://www.example.com/termofuse"
+    },
+    "icons": {
+        "color": "color.png",
+        "outline": "outline.png"
+    },
+    "name": {
+        "short": "Snack Overflow${{APP_NAME_SUFFIX}}",
+        "full": "Snack Overflow: the meal poll bot"
+    },
+    "description": {
+        "short": "Weekly meal attendance and Friday lunch polls",
+        "full": "Posts the weekly meal attendance poll and the Friday veg / non-veg poll, sends reminders to people who haven't voted, posts results, and shares the weekly menu. HR runs the commands in a 1:1 chat with the bot."
+    },
+    "accentColor": "#FFFFFF",
+    "supportsChannelFeatures": "tier1",
+    "bots": [
+        {
+            "botId": "${{BOT_ID}}",
+            "scopes": [
+                "personal",
+                "team",
+                "groupChat"
+            ],
+            "supportsFiles": false,
+            "isNotificationOnly": false,
+            "supportsTargetedMessages": false,
+            "commandLists": [
+                {
+                  "scopes": ["personal", "team", "groupChat"],
+                  "triggers": ["mention"],
+                  "commands": [
+                      { "title": "help", "description": "Show the commands." },
+                      { "title": "use this chat", "description": "HR: post polls, results and the menu in this chat." },
+                      { "title": "start weekly poll", "description": "HR: post next week's attendance poll." },
+                      { "title": "start friday poll", "description": "HR: post the Friday veg / non-veg poll." },
+                      { "title": "remind", "description": "HR: remind people who haven't voted." },
+                      { "title": "close poll", "description": "HR: close the poll and post results." },
+                      { "title": "set menu", "description": "HR: paste the vendor's menu and preview it." }
+                  ]
+                }
+            ]
+        }
+    ],
+    "composeExtensions": [],
+    "configurableTabs": [],
+    "staticTabs": [],
+    "permissions": [
+        "identity",
+        "messageTeamMembers"
+    ],
+    "validDomains": []
+}

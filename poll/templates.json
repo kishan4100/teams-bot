@@ -1,0 +1,19 @@
+{
+  "weekly_attendance": {
+    "question": "Team, kindly vote for this week.",
+    "options": [
+      { "id": "bf_lunch",   "label": "Breakfast + Lunch" },
+      { "id": "lunch_only", "label": "Only Lunch" },
+      { "id": "none",       "label": "No BF, No lunch" }
+    ],
+    "scope": "week"
+  },
+  "friday_diet": {
+    "question": "Please vote for your preference for today's lunch.",
+    "options": [
+      { "id": "veg",    "label": "Veg" },
+      { "id": "nonveg", "label": "Non veg" }
+    ],
+    "scope": "day"
+  }
+}

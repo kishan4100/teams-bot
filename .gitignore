@@ -1,0 +1,17 @@
+# Dependencies / tools
+node_modules/
+bot/devTools/
+
+# Secrets and local settings (bot password, HR email)
+bot/env/.env.*.user
+bot/env/.env.local
+bot/.localConfigs
+bot/.localConfigs.*
+
+# Runtime data (polls, votes, menus, schedule, target chat)
+poll/data/
+bot/data/
+
+# Build output / OS
+bot/appPackage/build/
+.DS_Store
