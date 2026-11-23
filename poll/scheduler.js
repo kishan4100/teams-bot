@@ -6,6 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const p = require('./poll');
+const announce = require('./announce');
 
 // Asia/Kolkata is a fixed +05:30 (no DST), so plain offset math is exact.
 const OFFSET = 330 * 60000, MIN = 60000, DAY = 1440 * MIN;
@@ -83,6 +84,12 @@ async function tick(bot, nowMs = Date.now()) {
     }
     if (await p.getPoll(`${type}-${opts.weekStart || opts.date}`)) continue;
     await postNew(bot, type, opts, toLocal(closeMs), menu);
+  }
+
+    // Recurring announcements (HR-defined text at a set time on set days). Optional bot function.
+  if (bot.postAnnouncement) {
+    const local = toLocal(nowMs);
+    for (const a of await announce.due(local, new Date(local.slice(0, 10) + 'T00:00:00Z').getUTCDay())) await call(bot, 'postAnnouncement', a);
   }
 
   // Close and remind every open poll that has a closesAt (polls with closesAt null are left to manual commands).

@@ -102,6 +102,18 @@ const text = (m) => (typeof m === "string" ? m : JSON.stringify(m));
   await agent.handleAction(c);
   assert.ok(/couldn't do that/.test(c.sent[0]));
 
+  // Scheduling an announcement: HR gets a confirm card; clicking Yes saves it
+  c = mk("hr1");
+  fake = { type: "tool", name: "schedule_announcement", args: { text: "Please switch off the AC and lights before leaving.", time: "18:30", days: ["weekdays"] } };
+  await agent.handleMessage(c, "remind everyone at 6:30pm mon to fri to switch off ac");
+  assert.ok(text(c.sent[0]).includes("agent_confirm") && text(c.sent[0]).includes("18:30"));
+  const yes = mk("hr1"); yes.activity.value = { action: "agent_confirm", tool: "schedule_announcement", args: { text: "Please switch off the AC and lights before leaving.", time: "18:30", days: ["weekdays"] } };
+  await agent.handleAction(yes);
+  assert.ok(yes.sent.some((m) => /Scheduled: every mon, tue, wed, thu, fri at 18:30/.test(text(m))));
+  assert.strictEqual(require("../../poll/announce").loadAllSync().length, 1);
+  c = mk("user1"); fake = { type: "tool", name: "schedule_announcement", args: {} };
+  await agent.handleMessage(c, "remind everyone"); assert.deepStrictEqual(c.sent, ["Only HR can do that."]);
+
   // Registry sanity: unique names, known types, every tool runs something, HR tools that change things have confirm
   const names = agent.TOOLS.map((t) => t.name);
   assert.strictEqual(new Set(names).size, names.length);
@@ -109,7 +121,7 @@ const text = (m) => (typeof m === "string" ? m : JSON.stringify(m));
     assert.ok(typeof t.run === "function" && ["hr", "everyone"].includes(t.who) && t.description, t.name);
     for (const d of Object.values(t.args)) assert.ok(["string", "number", "boolean", "date", "time", "datetime", "list"].includes(d.type), t.name);
   }
-  for (const n of ["close_poll", "remind_voters", "start_weekly_poll", "start_friday_poll", "set_schedule", "start_secret_santa", "draw_secret_santa"]) assert.ok(agent.TOOLS.find((t) => t.name === n).confirm, n + " needs confirm");
+  for (const n of ["close_poll", "remind_voters", "start_weekly_poll", "start_friday_poll", "set_schedule", "start_secret_santa", "draw_secret_santa", "schedule_announcement", "cancel_announcement"]) assert.ok(agent.TOOLS.find((t) => t.name === n).confirm, n + " needs confirm");
 
   console.log("agent tests passed");
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -117,6 +117,12 @@ async function postPollCard(poll) {
   pollCards.set(poll.pollId, { conversationId, activityId: res.id });
 }
 
+/** Post a recurring announcement (plain text) to the target chat. */
+async function postAnnouncement(a) {
+  const { conversationId, api } = requireTarget();
+  await api.conversations.createActivity(conversationId, { type: "message", text: `🔔 ${a.text}` });
+}
+
 /** Post any Adaptive Card to the target chat. Returns { conversationId, activityId }. */
 async function postCard(card) {
   const { conversationId, api } = requireTarget();
@@ -228,6 +234,7 @@ function hasPollCardInTarget(pollId) {
 module.exports = {
   postPollCard,
   postCard,
+  postAnnouncement,
   updatePollCard,
   postSummary,
   postMenuPreview,

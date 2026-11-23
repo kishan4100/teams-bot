@@ -12,8 +12,8 @@ const { startScheduler } = require("../poll/scheduler");
   // Normal mode checks every 30 s; POLL_DEMO=1 (+ POLL_DEMO_STEP_SECONDS) runs post → remind → close quickly.
   // Set POLL_SCHEDULER=off to disable it (e.g. while testing manual commands only).
   if (process.env.POLL_SCHEDULER !== "off") {
-    const { postPollCard, postSummary, postMenuCard, sendReminder, getMembers } = actions;
-    const start = () => startScheduler({ postPollCard, postSummary, postMenuCard, sendReminder, getMembers });
+    const { postPollCard, postSummary, postMenuCard, sendReminder, getMembers, postAnnouncement } = actions;
+    const start = () => startScheduler({ postPollCard, postSummary, postMenuCard, sendReminder, getMembers, postAnnouncement });
     if (process.env.CLIENT_ID) {
       start(); // real Teams: the bot can post proactively right away
     } else {

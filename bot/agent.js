@@ -106,6 +106,52 @@ const TOOLS = [
     run: (context, a) => cmds().feedbackCmd(context, [null, a.text]),
   },
 
+  // ----- Recurring announcements: HR gives the message, time and days; the scheduler posts it in the group. -----
+  {
+    name: "schedule_announcement",
+    who: "hr",
+    description: "Post a message in the group at a fixed time on chosen days, repeating every week (e.g. 'every weekday at 18:30 remind everyone to switch off the AC'). Use this for any repeating reminder or notice.",
+    args: {
+      text: { type: "string", required: true, description: "The message to post, written clearly and politely in the user's intent, keeping any names, numbers and details exactly as given. Do not include the time or days in it" },
+      time: { type: "time", required: true, description: "When to post, 24-hour HH:mm" },
+      days: { type: "list", required: true, description: "Days to post on: any of mon, tue, wed, thu, fri, sat, sun, or the single word 'weekdays' or 'daily'" },
+    },
+    confirm: (a) => `Post this in the group at ${a.time} on ${a.days.join(", ")}, every week?\n\n"${a.text}"`,
+    run: async (context, a) => {
+      const announce = require("../poll/announce");
+      const item = await announce.add({ text: a.text, time: a.time, days: a.days, createdBy: { userId: context.activity.from.id } });
+      actions.setTarget(context);
+      await context.send(`✅ Scheduled: every ${item.days.join(", ")} at ${item.time} I'll post in the group:\n\n"${item.text}"`);
+    },
+  },
+  {
+    name: "list_announcements",
+    who: "hr",
+    description: "List the repeating announcements that are scheduled.",
+    args: {},
+    run: async (context) => {
+      const all = await require("../poll/announce").list();
+      await context.send(all.length ? all.map((a, i) => `${i + 1}. ${a.days.join(", ")} at ${a.time}: "${a.text}"`).join("\n") : "No repeating announcements are scheduled.");
+    },
+  },
+  {
+    name: "cancel_announcement",
+    who: "hr",
+    description: "Stop a repeating announcement. The number is its position in the list of announcements.",
+    args: { number: { type: "number", required: true, description: "Its number in the list (1 = first)" } },
+    confirm: (a) => {
+      const x = require("../poll/announce").loadAllSync()[a.number - 1];
+      return x ? `Stop the ${x.days.join(", ")} ${x.time} announcement "${x.text.slice(0, 80)}"?` : "Stop that announcement?";
+    },
+    run: async (context, a) => {
+      const announce = require("../poll/announce");
+      const x = (await announce.list())[a.number - 1];
+      if (!x) return context.send("I can't find an announcement with that number. Ask me to list them.");
+      await announce.remove(x.id);
+      await context.send("✅ Stopped. It won't be posted again.");
+    },
+  },
+
   // ----- Read-only info (everyone). Answered by code from stored data; counts only, never who voted what. -----
   {
     name: "show_menu",

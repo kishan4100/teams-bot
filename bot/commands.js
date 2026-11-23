@@ -30,6 +30,7 @@ const HELP = [
   "- `use this chat`: send this once **in the meal-poll group, @mentioning me** (e.g. `@Snack Overflow use this chat`). Polls, results and the menu are posted there",
   "- `feedback summary`: the main themes from the last 7 days of meal feedback",
   "- Secret Santa (in plain English): *start a secret santa called Office Santa 2026, budget 500* posts a Join card in the group; later *draw the secret santa* draws it and privately messages everyone their person (needs 3+ people)",
+  "- Repeating reminders (plain English): *remind everyone at 6:30 pm Mon to Fri to switch off the AC and lights*; later *show scheduled reminders*, *stop the first scheduled reminder*",
   "- `help`: show this list",
   "",
   "**For everyone:**",
