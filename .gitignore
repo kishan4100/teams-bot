@@ -15,3 +15,6 @@ bot/data/
 # Build output / OS
 bot/appPackage/build/
 .DS_Store
+
+# Old Playground test data (kept locally, not committed)
+playground-backup/
