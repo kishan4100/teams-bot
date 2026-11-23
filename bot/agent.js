@@ -154,12 +154,9 @@ const TOOLS = [
   {
     name: "list_announcements",
     who: "hr",
-    description: "List the repeating announcements that are scheduled.",
+    description: "Show all scheduled alerts and reminders (repeating and one-day) as a card where each one can be deleted.",
     args: {},
-    run: async (context) => {
-      const all = await require("../poll/announce").list();
-      await context.send(all.length ? all.map((a, i) => `${i + 1}. ${when(a)} (${a.delivery === "dm" ? "private message" : "group"}): "${a.text}"`).join("\n") : "No repeating announcements are scheduled.");
-    },
+    run: async (context) => context.send(actions.cardMessage(alertsCard(await require("../poll/announce").list()))),
   },
   {
     name: "cancel_announcement",
@@ -261,6 +258,23 @@ const TOOLS = [
     run: (context) => require("./santa").santaStatus(context),
   },
 ];
+
+// Card listing the scheduled alerts, each with a Delete button (handled in handleAction: agent_delete_alert).
+function alertsCard(all) {
+  const body = [{ type: "TextBlock", text: `🔔 Scheduled alerts (${all.length})`, weight: "Bolder", size: "Medium" }];
+  if (!all.length) body.push({ type: "TextBlock", text: "No alerts are scheduled. Ask me, e.g. \"every weekday at 6:30 pm remind everyone to switch off the AC\".", wrap: true, isSubtle: true });
+  all.forEach((a, i) => {
+    body.push({
+      type: "Container", style: "emphasis", spacing: "Medium",
+      items: [
+        { type: "TextBlock", text: `${i + 1}. ${a.text.length > 140 ? a.text.slice(0, 137) + "..." : a.text}`, wrap: true, weight: "Bolder" },
+        { type: "TextBlock", text: `${when(a)} · ${a.delivery === "dm" ? "🔒 private message to everyone" : "👥 group"}`, wrap: true, isSubtle: true, size: "Small", spacing: "None" },
+        { type: "ActionSet", actions: [{ type: "Action.Submit", title: "🗑️ Delete", style: "destructive", data: { action: "agent_delete_alert", id: a.id } }] },
+      ],
+    });
+  });
+  return { $schema: "http://adaptivecards.io/schemas/adaptive-card.json", type: "AdaptiveCard", version: "1.5", body };
+}
 
 // "at 18:30 on mon, tue, every week" / "once on 2026-11-25 at 18:30"
 const when = (a) => (a.date ? `once on ${a.date} at ${a.time}` : `at ${a.time} on ${(a.days || []).join(", ")}, every week`);
@@ -425,6 +439,16 @@ async function handleAction(context) {
   }
   if (v.action === "agent_cancel") {
     await cmds().replaceCard(context, { type: "AdaptiveCard", version: "1.5", body: [{ type: "TextBlock", text: "❌ Cancelled. Nothing was done." }] });
+    return;
+  }
+  if (v.action === "agent_delete_alert") {
+    const announce = require("../poll/announce");
+    try {
+      await announce.remove(v.id);
+    } catch {
+      /* already gone: just show the current list */
+    }
+    await cmds().replaceCard(context, alertsCard(await announce.list()));
     return;
   }
   const tool = v.action === "agent_confirm" && byName(v.tool);

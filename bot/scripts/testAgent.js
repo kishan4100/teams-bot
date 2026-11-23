@@ -123,6 +123,25 @@ const text = (m) => (typeof m === "string" ? m : JSON.stringify(m));
   c = mk("hr1"); fake = { type: "tool", name: "list_announcements", args: {} };
   await agent.handleMessage(c, "list"); assert.ok(/once on 2099-01-05 at 17:00/.test(text(c.sent[0])));
 
+  // List alerts as a card with Delete buttons; deleting updates the card; non-HR can't delete
+  const announce = require("../../poll/announce");
+  for (const al of await announce.list()) await announce.remove(al.id);
+  const a1 = await announce.add({ text: "Switch off the AC", time: "18:30", days: ["weekdays"] });
+  const a2 = await announce.add({ text: "Party at 5!", time: "17:00", date: "2099-01-05", delivery: "dm" });
+  c = mk("hr1"); fake = { type: "tool", name: "list_announcements", args: {} };
+  await agent.handleMessage(c, "show my alerts");
+  const listed = text(c.sent[0]);
+  assert.ok(listed.includes("Scheduled alerts (2)") && listed.includes("Switch off the AC") && listed.includes("once on 2099-01-05") && listed.includes("agent_delete_alert") && listed.includes(a1.id));
+  const del = mk("hr1"); del.activity.value = { action: "agent_delete_alert", id: a1.id }; del.activity.replyToId = "m1";
+  await agent.handleAction(del);
+  assert.deepStrictEqual((await announce.list()).map((x) => x.id), [a2.id]);
+  const nh = mk("user1"); nh.activity.value = { action: "agent_delete_alert", id: a2.id };
+  await agent.handleAction(nh); assert.ok(/only HR/.test(nh.sent[0])); assert.strictEqual((await announce.list()).length, 1);
+  const again = mk("hr1"); again.activity.value = { action: "agent_delete_alert", id: a1.id }; again.activity.replyToId = "m1";
+  await agent.handleAction(again); // already deleted: no crash
+  await announce.remove(a2.id);
+  c = mk("hr1"); await agent.handleMessage(c, "show my alerts"); assert.ok(text(c.sent[0]).includes("Scheduled alerts (0)"));
+
   // Registry sanity: unique names, known types, every tool runs something, HR tools that change things have confirm
   const names = agent.TOOLS.map((t) => t.name);
   assert.strictEqual(new Set(names).size, names.length);
