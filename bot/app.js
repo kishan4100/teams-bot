@@ -4,7 +4,7 @@ const { LocalStorage } = require("@microsoft/teams.common");
 const config = require("./config");
 const { ManagedIdentityCredential } = require("@azure/identity");
 const actions = require("./teamsActions");
-const { handleCommand, handleMenuAction } = require("./commands");
+const { handleCommand, handleMenuAction, aiChat } = require("./commands");
 // Person B's poll logic (merged 2026-11-22; was ./mocks/poll).
 const polls = require("../poll/poll");
 
@@ -143,8 +143,8 @@ app.on("message", async (context) => {
     return;
   }
 
-  // Anything else: point to the command list (replaces the template's echo).
-  await context.send("Sorry, I didn't understand that. Type `help` to see what I can do.");
+  // Anything else: plain-English question or HR request via Kompass AI (falls back to "type help").
+  await aiChat(context, text);
 });
 
 actions.init(app);

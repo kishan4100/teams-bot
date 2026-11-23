@@ -109,3 +109,24 @@ Git: the project is in https://github.com/kishan4100/teams-bot (public). The roo
 - **Forgotten cards:** after a restart, the bot forgets which message holds each poll card. Votes still work (a click re-registers its card), and `start weekly poll` re-posts the card.
 - **Weekly reminders:** they repeat every 30 minutes from the start time, but only between 09:00 and 21:00. Friday reminders have no time window.
 - **Reminder grid:** reminders fire on an exact 30-minute grid, so a slot is skipped if the bot is down at that minute (Person B's known issue). Posts and closes do catch up.
+
+## 7. AI features (Kompass), added 2026-11-23
+
+The bot calls two workflows on Kompass, DotKonnekt's AI platform (dev, tenant `devtest`, project "Snack Overflow"). Code: `bot/kompass.js`, wired in `bot/commands.js` and `bot/app.js`.
+
+| Feature | How to try it | Workflow |
+|---|---|---|
+| Food Q&A | "what's for lunch on Wednesday?", "did I vote?" | `SnackOverflow_Chat` |
+| Plain-English HR commands | "push the friday cutoff to half past 12" → runs `set schedule friday close fri 12:30` (HR check still applies) | `SnackOverflow_Chat` |
+| AI menu reading | `set menu` with a messy menu; AI is used only when the normal parser gives warnings | `SnackOverflow_Extract` (task `menu`) |
+| Feedback themes | anyone: `feedback 👍 loved the biryani`; HR: `feedback summary` (last 7 days) | `SnackOverflow_Extract` (task `feedback`) |
+
+**Setup:** create `bot/.env` (gitignored) with `KOMPASS_PROJECT_ID=<Snack Overflow project id>`. Ask the team for the id; the project id is the only credential, so don't commit it. Without it, AI is off and the bot behaves as before.
+
+**Test:** `cd bot && node scripts/testKompass.js` (offline) or `node scripts/testKompass.js live` (calls Kompass).
+
+**Notes:**
+- Replies take about 3–5 s (menu: about 10 s). The bot shows no typing indicator while it waits.
+- Feedback is stored anonymously (date + text only) in `bot/data/feedback.json`.
+- Only the asking user's own vote and the saved menus go to the AI, never other people's names or votes.
+- Cost per call is shown in Kompass Traces (about $0.008 per chat call in testing).
