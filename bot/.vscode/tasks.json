@@ -5,6 +5,34 @@
     "version": "2.0.0",
     "tasks": [
         {
+            // Snack Overflow: start the bot for a MANUALLY uploaded app (no sideloading check, no auto-install).
+            // Registers app + bot, starts the dev tunnel and the bot, builds appPackage/build/appPackage.local.zip.
+            "label": "Start Bot for Manual Upload",
+            "dependsOn": [
+                "Validate prerequisites (no sideload check)",
+                "Start local tunnel",
+                "Provision",
+                "Deploy",
+                "Start application"
+            ],
+            "dependsOrder": "sequence"
+        },
+        {
+            "label": "Validate prerequisites (no sideload check)",
+            "type": "teamsfx",
+            "command": "debug-check-prerequisites",
+            "args": {
+                "prerequisites": [
+                    "nodejs",
+                    "portOccupancy"
+                ],
+                "portOccupancy": [
+                    3978,
+                    9239
+                ]
+            }
+        },
+        {
             "label": "Start Agent (Sandbox)",
             "dependsOn": [
                 "Validate prerequisites (Sandbox)",

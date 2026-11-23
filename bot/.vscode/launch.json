@@ -79,6 +79,18 @@
     ],
     "compounds": [
         {
+            "name": "Run bot (upload app manually in Teams)",
+            "configurations": [
+                "Attach to Local Service"
+            ],
+            "preLaunchTask": "Start Bot for Manual Upload",
+            "presentation": {
+                "group": "1-manual",
+                "order": 1
+            },
+            "stopAll": true
+        },
+        {
             "name": "Debug in Teams (Edge)",
             "configurations": [
                 "Launch App (Edge)",
