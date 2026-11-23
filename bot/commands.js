@@ -6,10 +6,13 @@
 // If neither is set, everyone counts as HR (that's the Playground setup; real Teams gets HR_EMAIL
 // from env/.env.local via m365agents.local.yml).
 
+const fs = require("fs");
+const path = require("path");
 const actions = require("./teamsActions");
 // Person B's poll logic (merged 2026-11-22; was ./mocks/poll).
 const polls = require("../poll/poll");
-const { nowInOffice, addDays, weeklyWeekStart, fridayOnOrAfter, closesAtFor } = require("./dates");
+const kompass = require("./kompass");
+const { nowInOffice, addDays, dayOfWeek, weeklyWeekStart, fridayOnOrAfter, closesAtFor } = require("./dates");
 const { formatDay, formatDateTime } = require("./cards/pollCard");
 const { buildMenuPreviewCard, buildMenuInputCard } = require("./cards/menuCards");
 
@@ -23,7 +26,12 @@ const HELP = [
   "- `show schedule`: when polls post, remind and close",
   "- `set schedule <weekly|friday> <post|remind|close> <day> <HH:mm>`: e.g. `set schedule friday close fri 12:30`",
   "- `use this chat`: send this once **in the meal-poll group, @mentioning me** (e.g. `@Snack Overflow use this chat`). Polls, results and the menu are posted there",
+  "- `feedback summary`: the main themes from the last 7 days of meal feedback",
   "- `help`: show this list",
+  "",
+  "**For everyone:**",
+  "- `feedback <comment>`: anonymous meal feedback, e.g. `feedback 👍 loved the biryani`",
+  "- Or just ask in plain English: *what's for lunch on Wednesday?*, *did I vote?* (HR: *push the friday cutoff to 12:30*)",
   "",
   "Tip: after `use this chat`, run all other commands in a 1:1 chat with me; only the results go to the group.",
 ].join("\n");
@@ -149,9 +157,37 @@ async function setMenuCmd(context, rawText) {
     await context.send(actions.cardMessage(buildMenuInputCard()));
     return;
   }
-  const menu = await polls.parseMenu(rawText);
+  let menu = await polls.parseMenu(rawText);
+  if (menu.warnings.length && kompass.enabled()) {
+    try {
+      menu = aiMenu(await kompass.extract("menu", rawText, nowInOffice().date), rawText);
+    } catch (err) {
+      context.log.warn(`AI menu parse failed, using the regular parser: ${err.message}`);
+    }
+  }
   actions.setTarget(context);
   await actions.postMenuPreview(menu);
+}
+
+// Kompass menu JSON → the same menu shape parseMenu returns. Throws if the output isn't usable.
+const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+const strings = (a) => (Array.isArray(a) ? a.map(String).map((s) => s.trim()).filter(Boolean) : []);
+function aiMenu(ai, rawText) {
+  if (!ai || !Array.isArray(ai.days) || ai.days.length !== 5) throw new Error("unexpected menu reader output");
+  const ok = typeof ai.weekStart === "string" && /^\d{4}-\d{2}-\d{2}$/.test(ai.weekStart) && dayOfWeek(ai.weekStart) === 1;
+  const weekStart = ok ? ai.weekStart : null; // null → preview shows the week picker
+  return {
+    weekStart,
+    weekEnd: weekStart && addDays(weekStart, 4),
+    rawText,
+    days: DAYS.map((day, i) => ({
+      day,
+      date: weekStart && addDays(weekStart, i),
+      breakfast: strings(ai.days[i].breakfast),
+      lunch: strings(ai.days[i].lunch),
+    })),
+    warnings: ["The menu wasn't in the usual format, so please check each day before posting.", ...strings(ai.warnings)],
+  };
 }
 
 // Edit the preview card the button was clicked on.
@@ -290,8 +326,93 @@ async function setScheduleCmd(context, m) {
   }
 }
 
+// ---------- Meal feedback (anonymous: only date + text are stored) ----------
+const FEEDBACK_FILE = path.join(__dirname, "data", "feedback.json");
+function loadFeedback() {
+  try { return JSON.parse(fs.readFileSync(FEEDBACK_FILE, "utf8")); } catch { return []; }
+}
+
+async function feedbackCmd(context, m) {
+  const all = loadFeedback();
+  all.push({ date: nowInOffice().date, text: m[1].slice(0, 500) });
+  fs.mkdirSync(path.dirname(FEEDBACK_FILE), { recursive: true });
+  fs.writeFileSync(FEEDBACK_FILE, JSON.stringify(all, null, 2));
+  await context.send("Thanks! Your feedback was saved anonymously. 🙏");
+}
+
+async function feedbackSummaryCmd(context) {
+  const { date } = nowInOffice();
+  const recent = loadFeedback().filter((f) => f.date >= addDays(date, -7)).map((f) => f.text);
+  if (recent.length === 0) {
+    await context.send("No feedback in the last 7 days.");
+    return;
+  }
+  if (!kompass.enabled()) {
+    await context.send(`**Feedback, last 7 days** (${recent.length}):\n\n${recent.map((t) => `- ${t}`).join("\n")}`);
+    return;
+  }
+  const out = await kompass.extract("feedback", recent.join("\n"), date);
+  const icon = { positive: "👍", negative: "👎" };
+  const themes = ((out && out.themes) || []).map(
+    (t) => `- ${icon[t.sentiment] || "↔️"} **${t.theme}** (${t.count}): _"${t.example}"_`
+  );
+  await context.send([`**Feedback, last 7 days** (${recent.length} comments)`, "", out && out.summary, "", ...themes].join("\n"));
+}
+
+// ---------- Plain-English messages (Kompass Chat workflow) ----------
+// Sends the user's own votes and this/next week's menu as context. Never sends other people's names or votes.
+async function chatContext(context) {
+  const { date } = nowInOffice();
+  const monday = addDays(date, -((dayOfWeek(date) + 6) % 7));
+  const menus = (await Promise.all([monday, addDays(monday, 7)].map((d) => polls.getMenu(d))))
+    .filter(Boolean)
+    .map((m) => ({ weekStart: m.weekStart, days: m.days.map(({ day, date: d, breakfast, lunch }) => ({ day, date: d, breakfast, lunch })) }));
+
+  const ids = [`weekly_attendance-${monday}`, `weekly_attendance-${addDays(monday, 7)}`, `friday_diet-${addDays(monday, 4)}`];
+  const userId = context.activity.from.id;
+  const votes = (await Promise.all(ids.map((id) => polls.getPoll(id)))).filter(Boolean).map((p) => {
+    const r = p.responses[userId];
+    const choice = r ? p.options.find((o) => o.id === r.optionId).label : "not voted yet";
+    return `${p.type === "friday_diet" ? `Friday lunch poll for ${p.date}` : `Weekly poll for week of ${p.weekStart}`} (${p.status}): ${choice}`;
+  });
+
+  return {
+    today: `${date} (${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][dayOfWeek(date)]})`,
+    menu: menus.length ? JSON.stringify(menus) : "",
+    my_votes: votes.join("\n"),
+  };
+}
+
+// Fallback for anything that isn't an exact command. Returns nothing; always replies.
+async function aiChat(context, text) {
+  const sorry = "Sorry, I didn't understand that. Type `help` to see what I can do.";
+  if (!text || !kompass.enabled()) {
+    await context.send(sorry);
+    return;
+  }
+  let out;
+  try {
+    out = await kompass.chat({ message: text.slice(0, 1000), is_hr: String(await isHr(context)), ...(await chatContext(context)) });
+  } catch (err) {
+    context.log.warn(`AI chat failed: ${err.message}`);
+    await context.send(sorry);
+    return;
+  }
+  if (out && out.type === "command" && typeof out.command === "string") {
+    await context.send(`On it: \`${out.command}\``);
+    // Goes through the normal command path, so the HR check still applies; no AI call again from here.
+    if (!(await handleCommand(context, out.command))) await context.send(sorry);
+  } else if (out && out.type === "answer" && out.text) {
+    await context.send(out.text);
+  } else {
+    await context.send(sorry);
+  }
+}
+
 const COMMANDS = [
   { re: /^help$/i, hrOnly: false, run: (ctx) => ctx.send(HELP) },
+  { re: /^feedback summary$/i, hrOnly: true, run: feedbackSummaryCmd },
+  { re: /^feedback (.+)$/i, hrOnly: false, run: feedbackCmd },
   { re: /^use this chat$/i, hrOnly: true, run: useThisChatCmd },
   { re: /^show schedule$/i, hrOnly: true, run: showScheduleCmd },
   { re: /^set schedule (\S+) (\S+) (\S+) (\S+)$/i, hrOnly: true, run: setScheduleCmd },
@@ -344,4 +465,4 @@ async function handleCommand(context, rawText) {
   return false;
 }
 
-module.exports = { handleCommand, handleMenuAction, htmlToText };
+module.exports = { handleCommand, handleMenuAction, htmlToText, aiChat, aiMenu };
