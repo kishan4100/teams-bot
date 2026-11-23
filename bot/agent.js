@@ -48,12 +48,23 @@ const TOOLS = [
     run: (context, a) => cmds().closePollCmd(context, a.which),
   },
   {
+    name: "reopen_poll",
+    who: "hr",
+    description: "Reopen the most recent closed meal poll (weekly or Friday); votes are kept. Only for the weekly and Friday meal polls.",
+    args: { which: { type: "string", required: true, description: "'weekly' or 'friday'", values: ["weekly", "friday"] } },
+    confirm: (a) => `Reopen the ${a.which} poll? Votes are kept and people can vote again.`,
+    run: (context, a) => cmds().reopenPollCmd(context, a.which),
+  },
+  {
     name: "remind_voters",
     who: "hr",
-    description: "Remind the people who haven't voted yet in an open poll (@mentions them in the group).",
-    args: { which: { type: "string", required: false, description: "'weekly' or 'friday' to pick a meal poll; leave out otherwise", values: ["weekly", "friday"] } },
-    confirm: (a) => `Post a reminder to people who haven't voted${a.which ? " in the " + a.which + " poll" : ""}?`,
-    run: (context, a) => cmds().remindCmd(context, a.which),
+    description: "Remind the people who haven't voted yet in an open poll (@mentions them in the group). Only for polls, not for Secret Santa.",
+    args: {
+      which: { type: "string", required: false, description: "'weekly' or 'friday' to pick a meal poll; leave out otherwise", values: ["weekly", "friday"] },
+      delivery: { type: "string", required: false, description: "Where to send it: 'group' (in the group chat) or 'dm' (privately to each person). Leave out unless the user says", values: ["group", "dm"] },
+    },
+    confirm: (a) => `${a.delivery === "dm" ? "Privately message" : "Post a reminder for"} the people who haven't voted${a.which ? " in the " + a.which + " poll" : ""}${a.delivery === "dm" ? "" : " in the group"}?`,
+    run: (context, a) => cmds().remindCmd(context, a.which, a.delivery),
   },
   {
     name: "start_weekly_poll",
@@ -110,18 +121,34 @@ const TOOLS = [
   {
     name: "schedule_announcement",
     who: "hr",
-    description: "Post a message in the group at a fixed time on chosen days, repeating every week (e.g. 'every weekday at 18:30 remind everyone to switch off the AC'). Use this for any repeating reminder or notice.",
+    description: "Post a message at a fixed time, either repeating every week on chosen days (e.g. 'every weekday at 18:30 remind everyone to switch off the AC') or ONCE on a single date (e.g. 'tomorrow at 5 pm tell everyone about the office party'). Use this for any scheduled reminder or notice. Give `days` for repeating, `date` for one day only, never both.",
     args: {
       text: { type: "string", required: true, description: "The message to post, written clearly and politely in the user's intent, keeping any names, numbers and details exactly as given. Do not include the time or days in it" },
       time: { type: "time", required: true, description: "When to post, 24-hour HH:mm" },
-      days: { type: "list", required: true, description: "Days to post on: any of mon, tue, wed, thu, fri, sat, sun, or the single word 'weekdays' or 'daily'" },
+      days: { type: "list", required: false, description: "For a repeating alert: days to post on, any of mon, tue, wed, thu, fri, sat, sun, or the single word 'weekdays' or 'daily'. Leave out for a one-day alert" },
+      date: { type: "date", required: false, description: "For a one-day alert: the date (YYYY-MM-DD), worked out from today. Leave out for a repeating alert" },
+      delivery: { type: "string", required: false, description: "Where to send it: 'group' (in the group chat) or 'dm' (privately to each person). Leave out unless the user says", values: ["group", "dm"] },
     },
-    confirm: (a) => `Post this in the group at ${a.time} on ${a.days.join(", ")}, every week?\n\n"${a.text}"`,
+    confirm: (a) => `${a.delivery === "dm" ? "Privately message everyone in the group" : "Post this in the group"} ${when(a)}?\n\n"${a.text}"`,
     run: async (context, a) => {
       const announce = require("../poll/announce");
-      const item = await announce.add({ text: a.text, time: a.time, days: a.days, createdBy: { userId: context.activity.from.id } });
+      if (!a.date && !(a.days && a.days.length)) return context.send("Should it repeat on certain days (e.g. every weekday), or be posted once on a single date?");
+      if (a.date && a.days && a.days.length) return context.send("Is that a one-day alert or a repeating one? Tell me either the date or the days, not both.");
+      if (a.date && `${a.date}T${a.time}:00` <= cmds().nowString()) return context.send("That date and time have already passed. Which date should I use?");
+      const item = await announce.add({ text: a.text, time: a.time, days: a.days, date: a.date, delivery: a.delivery || "group", createdBy: { userId: context.activity.from.id } });
       actions.setTarget(context);
-      await context.send(`✅ Scheduled: every ${item.days.join(", ")} at ${item.time} I'll post in the group:\n\n"${item.text}"`);
+      await context.send(`✅ Scheduled ${when(item)}. I'll ${item.delivery === "dm" ? "message everyone in the group privately" : "post in the group"}:\n\n"${item.text}"`);
+    },
+  },
+  {
+    name: "set_reminder_delivery",
+    who: "hr",
+    description: "Set where the automatic poll reminders (and reminders without a stated choice) go: in the group chat, or as a private 1:1 message to each person who hasn't voted.",
+    args: { delivery: { type: "string", required: true, description: "'group' or 'dm'", values: ["group", "dm"] } },
+    confirm: (a) => `From now on, send reminders ${a.delivery === "dm" ? "privately (1:1) to each person" : "in the group chat"}?`,
+    run: async (context, a) => {
+      await require("../poll/settings").setDelivery(a.delivery);
+      await context.send(`✅ Reminders will now be sent ${a.delivery === "dm" ? "privately to each person" : "in the group chat"}. You can still say "in the group" or "privately" on any single reminder.`);
     },
   },
   {
@@ -131,7 +158,7 @@ const TOOLS = [
     args: {},
     run: async (context) => {
       const all = await require("../poll/announce").list();
-      await context.send(all.length ? all.map((a, i) => `${i + 1}. ${a.days.join(", ")} at ${a.time}: "${a.text}"`).join("\n") : "No repeating announcements are scheduled.");
+      await context.send(all.length ? all.map((a, i) => `${i + 1}. ${when(a)} (${a.delivery === "dm" ? "private message" : "group"}): "${a.text}"`).join("\n") : "No repeating announcements are scheduled.");
     },
   },
   {
@@ -141,7 +168,7 @@ const TOOLS = [
     args: { number: { type: "number", required: true, description: "Its number in the list (1 = first)" } },
     confirm: (a) => {
       const x = require("../poll/announce").loadAllSync()[a.number - 1];
-      return x ? `Stop the ${x.days.join(", ")} ${x.time} announcement "${x.text.slice(0, 80)}"?` : "Stop that announcement?";
+      return x ? `Stop the announcement ${when(x)}: "${x.text.slice(0, 80)}"?` : "Stop that announcement?";
     },
     run: async (context, a) => {
       const announce = require("../poll/announce");
@@ -212,6 +239,14 @@ const TOOLS = [
     run: (context) => require("./santa").drawSanta(context),
   },
   {
+    name: "remind_secret_santa",
+    who: "hr",
+    description: "Remind the people in the group who haven't joined the open Secret Santa yet (@mentions them). Not for poll votes.",
+    args: { delivery: { type: "string", required: false, description: "Where to send it: 'group' (in the group chat) or 'dm' (privately to each person). Leave out unless the user says", values: ["group", "dm"] }, },
+    confirm: (a) => `${a.delivery === "dm" ? "Privately message" : "Post a reminder in the group for"} the people who haven't joined the Secret Santa?`,
+    run: (context, a) => require("./santa").remindSanta(context, a.delivery),
+  },
+  {
     name: "my_santa",
     who: "everyone",
     description: "Tell the user who they are Secret Santa for (only works in a 1:1 chat).",
@@ -226,6 +261,9 @@ const TOOLS = [
     run: (context) => require("./santa").santaStatus(context),
   },
 ];
+
+// "at 18:30 on mon, tue, every week" / "once on 2026-11-25 at 18:30"
+const when = (a) => (a.date ? `once on ${a.date} at ${a.time}` : `at ${a.time} on ${(a.days || []).join(", ")}, every week`);
 
 const byName = (name) => TOOLS.find((t) => t.name === name);
 const allowed = (tool, isHr) => tool.who === "everyone" || isHr;

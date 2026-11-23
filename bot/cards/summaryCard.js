@@ -4,6 +4,7 @@
 // breakfast = bf_lunch, lunch = bf_lunch + lunch_only.
 
 const { formatDay } = require("./pollCard");
+const { metaOf, chip, optionRows, banner, currentStyle } = require("./pollUi");
 
 // Option labels aren't in the summary object, so keep a label table for known ids.
 // Unknown ids fall back to the id itself.
@@ -26,61 +27,52 @@ function buildSummaryCard(summary) {
   const voters = summary.voters || {};
   const date = dateFromPollId(summary.pollId);
   const isWeekly = summary.type === "weekly_attendance";
+  const total = summary.totalVotes ?? 0;
 
+  // Meal polls get their labels from the table, custom polls carry their own.
+  const labelOf = Object.fromEntries((summary.options || []).map((o) => [o.id, o.label]));
+  const options = Object.keys(counts).map((id) => ({ id, label: labelOf[id] || LABELS[id] || id }));
+  const poll = { type: summary.type, options };
+
+  // Winner line: the option(s) with the most votes.
+  const max = Math.max(0, ...Object.values(counts));
+  const top = options.filter((o) => max > 0 && counts[o.id] === max);
+  const winner =
+    max === 0 ? "😴 Nobody voted this time"
+      : top.length === 1 ? `👑 Winner: ${top[0].label} (${max} ${max === 1 ? "vote" : "votes"}, ${Math.round((max / (total || 1)) * 100)}%)`
+        : `🤝 It's a tie: ${top.map((o) => o.label).join(" and ")} (${max} each)`;
+
+  const meta = metaOf(poll);
   const body = [
-    { type: "TextBlock", text: "📊 Poll closed: results", weight: "Bolder", size: "Medium", wrap: true },
-    { type: "TextBlock", text: summary.question, wrap: true, spacing: "None" },
+    banner(currentStyle(), { icon: "📊", label: `${meta.title} · RESULTS`, title: summary.question, tone: "results" }),
   ];
-  if (summary.multi || summary.anonymous) {
-    body.push({
-      type: "TextBlock",
-      text: [summary.multi && "Several answers allowed", summary.anonymous && "Anonymous poll"].filter(Boolean).join(" · "),
-      isSubtle: true, size: "Small", spacing: "None", wrap: true,
-    });
-  }
-  if (date) {
-    body.push({
-      type: "TextBlock",
-      text: isWeekly ? `Week starting ${formatDay(date)}` : `For ${formatDay(date)}`,
-      isSubtle: true, spacing: "None", wrap: true,
-    });
-  }
+
+  const chips = [];
+  if (date) chips.push(chip(isWeekly ? `📅 Week starting ${formatDay(date)}` : `📅 For ${formatDay(date)}`));
+  if (summary.multi) chips.push(chip("☑️ Several answers allowed"));
+  if (summary.anonymous) chips.push(chip("🕶️ Anonymous poll"));
+  if (chips.length) body.push({ type: "ColumnSet", columns: chips, spacing: "Small" });
+
+  body.push({ type: "TextBlock", text: winner, weight: "Bolder", size: "Medium", wrap: true, spacing: "Medium" });
 
   if (isWeekly) {
-    const breakfast = counts.bf_lunch || 0;
-    const lunch = (counts.bf_lunch || 0) + (counts.lunch_only || 0);
-    body.push({
-      type: "FactSet",
-      separator: true,
-      facts: [
-        { title: "🍳 Breakfast count", value: String(breakfast) },
-        { title: "🍛 Lunch count", value: String(lunch) },
-      ],
-    });
-  }
-
-  // Custom polls carry their own labels in summary.options; meal polls use the LABELS table.
-  const labelOf = Object.fromEntries((summary.options || []).map((o) => [o.id, o.label]));
-  for (const id of Object.keys(counts)) {
-    const names = voters[id] || [];
-    const nameLine = summary.anonymous ? null : names.length ? names.join(", ") : "—";
-    body.push({
-      type: "Container",
-      separator: true,
+    // Stat tiles for HR's kitchen numbers: breakfast = bf_lunch, lunch = bf_lunch + lunch_only.
+    const tile = (icon, label, n) => ({
+      type: "Column", width: "stretch", style: "emphasis",
       items: [
-        {
-          type: "ColumnSet",
-          columns: [
-            { type: "Column", width: "stretch", items: [{ type: "TextBlock", text: labelOf[id] || LABELS[id] || id, weight: "Bolder", wrap: true }] },
-            { type: "Column", width: "auto", items: [{ type: "TextBlock", text: String(counts[id]), weight: "Bolder" }] },
-          ],
-        },
-        ...(nameLine === null ? [] : [{ type: "TextBlock", text: nameLine, isSubtle: true, wrap: true, spacing: "None" }]),
+        { type: "TextBlock", text: String(n), size: "ExtraLarge", weight: "Bolder", horizontalAlignment: "Center", spacing: "None" },
+        { type: "TextBlock", text: `${icon} ${label}`, isSubtle: true, size: "Small", horizontalAlignment: "Center", spacing: "None" },
       ],
+    });
+    body.push({
+      type: "ColumnSet", spacing: "Medium",
+      columns: [tile("🍳", "Breakfast count", counts.bf_lunch || 0), tile("🍛", "Lunch count", (counts.bf_lunch || 0) + (counts.lunch_only || 0))],
     });
   }
 
-  body.push({ type: "TextBlock", text: `${summary.multi ? "Voters" : "Total votes"}: ${summary.totalVotes ?? 0}`, isSubtle: true, size: "Small", separator: true });
+  body.push(...optionRows(poll, counts, total, { names: summary.anonymous ? null : voters, winnerIcon: "🏆" }));
+
+  body.push({ type: "TextBlock", text: `👥 ${total} ${summary.multi ? (total === 1 ? "voter" : "voters") : total === 1 ? "vote" : "votes"}`, weight: "Bolder", size: "Small", separator: true, spacing: "Medium" });
 
   return {
     $schema: "http://adaptivecards.io/schemas/adaptive-card.json",

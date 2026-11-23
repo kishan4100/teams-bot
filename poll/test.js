@@ -62,6 +62,21 @@ const p = require('./poll');
   const fs2 = await p.closePoll(f.pollId);
   assert.deepEqual(fs2.counts, { veg: 1, nonveg: 0 });
 
+  // setCloseTime: moves an open poll's close time; a closed poll is left as it was
+  const f2 = await p.createPoll('friday_diet', { date: '2026-12-04', closesAt: '2026-12-04T12:00:00' });
+  assert.equal((await p.setCloseTime(f2.pollId, '2026-12-04T12:30:00')).closesAt, '2026-12-04T12:30:00');
+  assert.equal((await p.getPoll(f2.pollId)).closesAt, '2026-12-04T12:30:00');
+  assert.equal((await p.setCloseTime(f.pollId, '2026-12-31T00:00:00')).closesAt, f.closesAt);
+
+  // reopenLatestPoll: latest closed poll of the type, votes kept; nothing to reopen if the latest is open
+  const r = await p.reopenLatestPoll('weekly_attendance', () => null);
+  assert.equal(r.pollId, w.pollId);
+  assert.equal(r.status, 'open');
+  assert.equal(r.closesAt, null);
+  assert.equal(Object.keys(r.responses).length, 2);
+  assert.equal(await p.reopenLatestPoll('weekly_attendance', () => null), null);
+  assert.equal(await p.reopenLatestPoll('friday_diet', () => null), null); // latest friday (f2) is open
+
   assert.equal(await p.getPoll('missing'), null);
   await assert.rejects(p.createPoll('lunch_party', {}));
 

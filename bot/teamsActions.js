@@ -22,13 +22,22 @@ const { formatDay, formatDateTime } = require("./cards/pollCard");
 const fs = require("fs");
 const path = require("path");
 
-const TARGET_FILE = path.join(__dirname, "data", "target.json");
+const DATA = process.env.BOT_DATA_DIR || path.join(__dirname, "data"); // BOT_DATA_DIR: tests use a temp folder
+const TARGET_FILE = path.join(DATA, "target.json");
 
 let target = loadTarget(); // { conversationId, conversationType, setAt }: where team posts go
 let hrChat = null; // { conversationId, api }: where the last HR command was typed
 let lastApi = null; // ctx.api from the most recent incoming activity
 let appRef = null; // the App, for the app.api fallback
+let lastTenantId = loadSmall("tenant.json").tenantId || null; // needed to open 1:1 chats; remembered across restarts
 const pollCards = new Map(); // pollId -> { conversationId, activityId }  (in memory; lost on restart)
+
+function loadSmall(name) {
+  try { return JSON.parse(fs.readFileSync(path.join(DATA, name), "utf8")); } catch { return {}; }
+}
+function saveSmall(name, obj) {
+  try { fs.mkdirSync(DATA, { recursive: true }); fs.writeFileSync(path.join(DATA, name), JSON.stringify(obj, null, 2)); } catch { /* not critical */ }
+}
 
 function cardMessage(card) {
   return {
@@ -54,6 +63,9 @@ function init(app) {
 let firstActivityCallbacks = [];
 function noteActivity(ctx) {
   if (ctx && ctx.api) lastApi = ctx.api;
+  const tid = ctx && ctx.activity && ctx.activity.conversation && ctx.activity.conversation.tenantId;
+  if (tid && tid !== lastTenantId) { lastTenantId = tid; saveSmall("tenant.json", { tenantId: tid }); }
+  rememberPersonal(ctx && ctx.activity);
   if (firstActivityCallbacks.length) {
     const cbs = firstActivityCallbacks;
     firstActivityCallbacks = [];
@@ -95,6 +107,58 @@ function rememberPollCard(pollId, conversationId, activityId, api) {
   if (api) lastApi = api;
 }
 
+// ---------- Private (1:1) messages ----------
+// Known 1:1 chats (userId -> conversationId): filled whenever someone messages the bot in a personal chat, saved on disk.
+const DM_FILE = path.join(DATA, "dm-conversations.json");
+let dmChats = null;
+const loadDm = () => (dmChats ||= (() => { try { return JSON.parse(fs.readFileSync(DM_FILE, "utf8")); } catch { return {}; } })());
+function saveDm() {
+  try { fs.mkdirSync(path.dirname(DM_FILE), { recursive: true }); fs.writeFileSync(DM_FILE, JSON.stringify(dmChats, null, 2)); } catch { /* not critical */ }
+}
+function rememberPersonal(activity) {
+  if (!activity || !activity.from || !activity.conversation || activity.conversation.conversationType !== "personal") return;
+  const chats = loadDm();
+  if (chats[activity.from.id] !== activity.conversation.id) { chats[activity.from.id] = activity.conversation.id; saveDm(); }
+}
+
+/**
+ * Send one private message (text) to a user. Reuses their 1:1 chat with the bot if known, otherwise creates one (Teams opens it
+ * if the app is allowed to message them; unverified in real Teams). A stale saved chat is dropped and re-created once.
+ * opts.api / opts.tenantId override the defaults (tests, or when a context is at hand). Throws if Teams refuses.
+ */
+async function sendDm(userId, text, opts = {}) {
+  const api = opts.api || getApi();
+  const chats = loadDm();
+  if (chats[userId]) {
+    try {
+      await api.conversations.createActivity(chats[userId], { type: "message", text });
+      return;
+    } catch {
+      delete chats[userId]; // stale: create a new one below
+    }
+  }
+  const tenantId = opts.tenantId || lastTenantId;
+  if (!tenantId) throw new Error("tenant id unknown yet (someone must message the bot once after startup)");
+  const res = await api.conversations.create({ members: [{ id: userId }], tenantId });
+  chats[userId] = res.id;
+  saveDm();
+  await api.conversations.createActivity(res.id, { type: "message", text });
+}
+
+/** DM the same text to several people ([{ userId, name }]). Returns the names it couldn't reach. */
+async function sendDms(people, text, opts = {}) {
+  const failed = [];
+  for (const m of people) {
+    try {
+      await sendDm(m.userId, text, opts);
+    } catch (err) {
+      console.warn(`[dm] to ${m.userId} failed: ${err.message}`);
+      failed.push(m.name);
+    }
+  }
+  return failed;
+}
+
 function getApi() {
   if (lastApi) return lastApi;
   // app.api only works with real bot credentials (real Teams). Without them (Playground) it would call
@@ -117,9 +181,34 @@ async function postPollCard(poll) {
   pollCards.set(poll.pollId, { conversationId, activityId: res.id });
 }
 
+/** Remind people who haven't joined the Secret Santa yet (@mentions them, in chunks). people = [{ userId, name }]. */
+async function sendSantaReminder(event, people, delivery = "group") {
+  const { conversationId, api } = requireTarget();
+  if (delivery === "dm") {
+    const failed = await sendDms(people, `🎅 Reminder: **${event.title}** is open. Press **Join** on the Secret Santa card in the group chat if you want to take part.`);
+    if (failed.length) await sendSantaReminder(event, people.filter((m) => failed.includes(m.name)), "group");
+    return { failed };
+  }
+  for (let i = 0; i < people.length; i += MENTIONS_PER_MESSAGE) {
+    const chunk = people.slice(i, i + MENTIONS_PER_MESSAGE);
+    const entities = chunk.map((m) => ({ type: "mention", text: `<at>${m.name}</at>`, mentioned: { id: m.userId, name: m.name } }));
+    const names = entities.map((e) => e.text).join(", ");
+    const text = i === 0
+      ? `🎅 Reminder: **${event.title}** is open. Press **Join** on the Secret Santa card above if you want to take part.\nNot joined yet: ${names}`
+      : `Not joined yet (cont.): ${names}`;
+    await api.conversations.createActivity(conversationId, { type: "message", text, entities });
+  }
+  return { failed: [] };
+}
+
 /** Post a recurring announcement (plain text) to the target chat. */
 async function postAnnouncement(a) {
   const { conversationId, api } = requireTarget();
+  if (a.delivery === "dm") {
+    const failed = await sendDms(await getMembers(), `🔔 ${a.text}`); // everyone in the group, privately
+    if (failed.length) console.warn(`[announcement ${a.id}] couldn't DM: ${failed.join(", ")}`);
+    return;
+  }
   await api.conversations.createActivity(conversationId, { type: "message", text: `🔔 ${a.text}` });
 }
 
@@ -131,6 +220,22 @@ async function postCard(card) {
 }
 
 /** Replace the posted poll card with fresh counts (same message, edited in place). */
+// Many people voting at once would mean one card edit per vote, and Teams limits how fast a message can be edited.
+// So votes ask for a refresh and a single edit goes out ~1.5 s after the last one, showing the latest counts.
+const refreshTimers = new Map();
+function updatePollCardSoon(pollId, fetchPoll, delayMs = 1500) {
+  clearTimeout(refreshTimers.get(pollId));
+  refreshTimers.set(pollId, setTimeout(async () => {
+    refreshTimers.delete(pollId);
+    try {
+      const poll = await fetchPoll();
+      if (poll) await updatePollCard(poll);
+    } catch (err) {
+      console.warn(`[card refresh] ${pollId}: ${err.message}`);
+    }
+  }, delayMs));
+}
+
 async function updatePollCard(poll) {
   const ref = pollCards.get(poll.pollId);
   if (!ref) throw new Error(`No posted card known for poll ${poll.pollId}`);
@@ -196,16 +301,22 @@ function pollLabel(poll) {
  * nonVoters = null/undefined (member list unavailable) → a general reminder without mentions.
  * nonVoters = [] → nothing is sent.
  */
-async function sendReminder(poll, nonVoters) {
+async function sendReminder(poll, nonVoters, delivery = "group") {
   const { conversationId, api } = requireTarget();
   const closes = poll.closesAt ? ` before ${formatDateTime(poll.closesAt)}` : "";
   const intro = `⏰ Reminder: please vote in ${pollLabel(poll)}${closes}. Vote on the poll card above.`;
+  if (delivery === "dm" && Array.isArray(nonVoters)) {
+    // Private: one 1:1 message each. Anyone the bot can't reach is @mentioned in the group instead (so nobody is missed).
+    const failed = await sendDms(nonVoters, `${intro.replace("above", "in the group chat")}`);
+    if (failed.length) await sendReminder(poll, nonVoters.filter((m) => failed.includes(m.name)), "group");
+    return { failed };
+  }
 
   if (!Array.isArray(nonVoters)) {
     await api.conversations.createActivity(conversationId, { type: "message", text: `${intro}\nIf you've already voted, thanks!` });
-    return;
+    return { failed: [] };
   }
-  if (nonVoters.length === 0) return;
+  if (nonVoters.length === 0) return { failed: [] };
 
   for (let i = 0; i < nonVoters.length; i += MENTIONS_PER_MESSAGE) {
     const chunk = nonVoters.slice(i, i + MENTIONS_PER_MESSAGE);
@@ -218,6 +329,7 @@ async function sendReminder(poll, nonVoters) {
     const text = i === 0 ? `${intro}\nNot voted yet: ${names}` : `Not voted yet (cont.): ${names}`;
     await api.conversations.createActivity(conversationId, { type: "message", text, entities });
   }
+  return { failed: [] };
 }
 
 // True if a card for this poll has been posted (or clicked) since the bot started.
@@ -235,7 +347,12 @@ module.exports = {
   postPollCard,
   postCard,
   postAnnouncement,
+  sendSantaReminder,
+  sendDm,
+  sendDms,
+  rememberPersonal,
   updatePollCard,
+  updatePollCardSoon,
   postSummary,
   postMenuPreview,
   postMenuCard,

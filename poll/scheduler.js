@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const p = require('./poll');
 const announce = require('./announce');
+const settings = require('./settings');
 
 // Asia/Kolkata is a fixed +05:30 (no DST), so plain offset math is exact.
 const OFFSET = 330 * 60000, MIN = 60000, DAY = 1440 * MIN;
@@ -48,7 +49,7 @@ async function remind(bot, poll) {
   const members = await call(bot, 'getMembers');
   if (!members) return;
   const nonVoters = await p.getNonVoters(poll.pollId, members);
-  if (nonVoters.length) await call(bot, 'sendReminder', poll, nonVoters);
+  if (nonVoters.length) await call(bot, 'sendReminder', poll, nonVoters, await settings.getDelivery());
 }
 
 async function postNew(bot, type, opts, closesAt, menu) {

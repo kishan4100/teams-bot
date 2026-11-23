@@ -45,17 +45,20 @@ const w = buildPollCard(weekly);
 assert.strictEqual(w.actions.length, 3, "one button per option");
 assert.deepStrictEqual(w.actions[0].data, { action: "vote", pollId: weekly.pollId, optionId: "bf_lunch" });
 const wText = JSON.stringify(w);
-assert.ok(wText.includes("Week: Mon 23 Nov – Fri 27 Nov"), "week range shown");
-assert.ok(wText.includes("Closes: Mon 23 Nov, 10:00"), "closesAt shown");
-assert.ok(wText.includes("Total votes: 3"), "total count");
+assert.ok(wText.includes("Mon 23 Nov – Fri 27 Nov"), "week range shown");
+assert.ok(wText.includes("Closes Mon 23 Nov, 10:00"), "closesAt shown");
+assert.ok(wText.includes("👥 3 votes"), "total count");
 assert.ok(!wText.includes("Ravi"), "no voter names on the poll card");
+assert.ok(wText.includes("67%") && wText.includes("33%") && wText.includes("0%"), "percentages shown (2 of 3, 1 of 3, 0)");
+assert.ok(wText.includes("🍳🍛 Breakfast + Lunch"), "buttons carry emoji");
+assert.strictEqual(w.actions[0].data.optionId, "bf_lunch");
 
 const f = buildPollCard(friday);
 assert.strictEqual(f.actions, undefined, "closed poll has no buttons");
 const fText = JSON.stringify(f);
-assert.ok(fText.includes("For: Fri 27 Nov"), "friday date shown");
+assert.ok(fText.includes("Fri 27 Nov"), "friday date shown");
 assert.ok(fText.includes("closed"), "closed label shown");
-assert.ok(fText.includes("Total votes: 0"), "zero votes ok");
+assert.ok(fText.includes("👥 0 votes"), "zero votes ok");
 
 console.log("All pollCard checks passed.\n");
 if (process.argv.includes("--print")) {

@@ -36,11 +36,7 @@ async function handleVote(context) {
     await context.send("Sorry, this poll is closed, so your vote wasn't counted.");
     return;
   }
-  try {
-    await actions.updatePollCard(poll);
-  } catch (err) {
-    context.log.warn(`updatePollCard failed: ${err.message}`);
-  }
+  actions.updatePollCardSoon(pollId, () => polls.getPoll(pollId)); // batched: see teamsActions
 }
 
 // Create storage for conversation history

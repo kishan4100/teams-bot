@@ -109,10 +109,19 @@ const text = (m) => (typeof m === "string" ? m : JSON.stringify(m));
   assert.ok(text(c.sent[0]).includes("agent_confirm") && text(c.sent[0]).includes("18:30"));
   const yes = mk("hr1"); yes.activity.value = { action: "agent_confirm", tool: "schedule_announcement", args: { text: "Please switch off the AC and lights before leaving.", time: "18:30", days: ["weekdays"] } };
   await agent.handleAction(yes);
-  assert.ok(yes.sent.some((m) => /Scheduled: every mon, tue, wed, thu, fri at 18:30/.test(text(m))));
+  assert.ok(yes.sent.some((m) => /Scheduled at 18:30 on mon, tue, wed, thu, fri, every week/.test(text(m))));
   assert.strictEqual(require("../../poll/announce").loadAllSync().length, 1);
   c = mk("user1"); fake = { type: "tool", name: "schedule_announcement", args: {} };
   await agent.handleMessage(c, "remind everyone"); assert.deepStrictEqual(c.sent, ["Only HR can do that."]);
+
+  // One-day alert: needs a future date; both/neither days+date are questions; list shows "once on"
+  const once = (args) => { const x = mk("hr1"); x.activity.value = { action: "agent_confirm", tool: "schedule_announcement", args }; return agent.handleAction(x).then(() => x.sent.map(text).join(" | ")); };
+  assert.ok(/Scheduled once on 2099-01-05 at 17:00/.test(await once({ text: "Party at 5!", time: "17:00", date: "2099-01-05" })));
+  assert.ok(/already passed/.test(await once({ text: "Old", time: "17:00", date: "2020-01-05" })));
+  assert.ok(/one-day alert or a repeating/.test(await once({ text: "x", time: "17:00", date: "2099-01-05", days: ["mon"] })));
+  assert.ok(/repeat on certain days/.test(await once({ text: "x", time: "17:00" })));
+  c = mk("hr1"); fake = { type: "tool", name: "list_announcements", args: {} };
+  await agent.handleMessage(c, "list"); assert.ok(/once on 2099-01-05 at 17:00/.test(text(c.sent[0])));
 
   // Registry sanity: unique names, known types, every tool runs something, HR tools that change things have confirm
   const names = agent.TOOLS.map((t) => t.name);
@@ -121,7 +130,7 @@ const text = (m) => (typeof m === "string" ? m : JSON.stringify(m));
     assert.ok(typeof t.run === "function" && ["hr", "everyone"].includes(t.who) && t.description, t.name);
     for (const d of Object.values(t.args)) assert.ok(["string", "number", "boolean", "date", "time", "datetime", "list"].includes(d.type), t.name);
   }
-  for (const n of ["close_poll", "remind_voters", "start_weekly_poll", "start_friday_poll", "set_schedule", "start_secret_santa", "draw_secret_santa", "schedule_announcement", "cancel_announcement"]) assert.ok(agent.TOOLS.find((t) => t.name === n).confirm, n + " needs confirm");
+  for (const n of ["close_poll", "reopen_poll", "remind_voters", "start_weekly_poll", "start_friday_poll", "set_schedule", "start_secret_santa", "draw_secret_santa", "remind_secret_santa", "set_reminder_delivery", "schedule_announcement", "cancel_announcement"]) assert.ok(agent.TOOLS.find((t) => t.name === n).confirm, n + " needs confirm");
 
   console.log("agent tests passed");
 })().catch((e) => { console.error(e); process.exit(1); });

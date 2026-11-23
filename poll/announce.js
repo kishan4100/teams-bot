@@ -27,12 +27,15 @@ function normalizeDays(input) {
   return DAYS.filter((d) => out.has(d)).sort((a, b) => ((DAYS.indexOf(a) + 6) % 7) - ((DAYS.indexOf(b) + 6) % 7)); // Mon..Sun
 }
 
-async function add({ text, time, days, createdBy = null } = {}) {
+// date (YYYY-MM-DD) makes it a one-time alert on that day (days ignored); without it, it repeats weekly on `days`.
+async function add({ text, time, days, date = null, delivery = 'group', createdBy = null } = {}) {
+  if (!['group', 'dm'].includes(delivery)) throw new Error('delivery must be "group" or "dm"');
   const t = String(text || '').trim();
   if (!t) throw new Error('The announcement needs some text.');
   if (t.length > 1000) throw new Error('The announcement is too long (max 1000 characters).');
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time || '')) throw new Error('Time must be HH:mm (24-hour).');
-  const item = { id: crypto.randomBytes(3).toString('hex'), text: t, time, days: normalizeDays(days), createdAt: new Date().toISOString(), createdBy, lastSent: null };
+  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Date must be YYYY-MM-DD.');
+  const item = { id: crypto.randomBytes(3).toString('hex'), text: t, time, days: date ? [] : normalizeDays(days), date: date || null, delivery, createdAt: new Date().toISOString(), createdBy, lastSent: null };
   const list = loadAllSync(); list.push(item); save(list);
   return item;
 }
@@ -45,17 +48,21 @@ async function remove(id) {
 }
 
 // nowLocal = "YYYY-MM-DDTHH:mm:ss" (office time), dow = 0..6 (Sunday = 0). Marks what it returns as sent for today.
+// One-time alerts (a.date) are deleted once posted, or once their day has passed without being posted.
 async function due(nowLocal, dow) {
   const date = nowLocal.slice(0, 10), hhmm = nowLocal.slice(11, 16);
   const mins = (s) => Number(s.slice(0, 2)) * 60 + Number(s.slice(3, 5));
-  const all = loadAllSync(); const out = [];
+  let all = loadAllSync(); const out = []; let changed = false;
   for (const a of all) {
-    if (!a.days.includes(DAYS[dow]) || a.lastSent === date) continue;
+    if (a.date ? a.date !== date : !a.days.includes(DAYS[dow])) continue;
+    if (a.lastSent === date) continue;
     const late = mins(hhmm) - mins(a.time);
     if (late < 0 || late > CATCH_UP_MINUTES) continue;
-    a.lastSent = date; out.push(a);
+    a.lastSent = date; out.push(a); changed = true;
   }
-  if (out.length) save(all); // marked before posting, so a slow/failed post never repeats
+  const before = all.length;
+  all = all.filter((a) => !(a.date && (a.lastSent === a.date || a.date < date))); // one-time: done (or missed)
+  if (changed || all.length !== before) save(all); // marked before posting, so a slow/failed post never repeats
   return out;
 }
 

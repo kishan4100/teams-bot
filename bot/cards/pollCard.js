@@ -4,6 +4,8 @@
 // Pure function: no SDK calls, so it is safe to unit test and reuse in
 // postPollCard (new message) and updatePollCard (replace existing message).
 
+const { metaOf, optionIcon, chip, optionRows, banner, currentStyle } = require("./pollUi");
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -35,9 +37,9 @@ function formatDateTime(value) {
 
 function periodText(poll) {
   if (poll.weekStart && poll.weekEnd) {
-    return `Week: ${formatDay(poll.weekStart)} – ${formatDay(poll.weekEnd)}`;
+    return `${formatDay(poll.weekStart)} – ${formatDay(poll.weekEnd)}`;
   }
-  if (poll.date) return `For: ${formatDay(poll.date)}`;
+  if (poll.date) return formatDay(poll.date);
   return null;
 }
 
@@ -59,13 +61,6 @@ function countVotes(poll) {
 const MAX_BUTTONS = 5;
 const usesChoiceSet = (poll) => !!poll.multi || (poll.options || []).length > MAX_BUTTONS;
 
-// Simple text bar; Adaptive Cards 1.5 has no progress-bar element.
-function bar(count, total, width = 10) {
-  if (total === 0) return "░".repeat(width);
-  const filled = Math.round((count / total) * width);
-  return "█".repeat(filled) + "░".repeat(width - filled);
-}
-
 /**
  * Build the poll Adaptive Card.
  * @param {object} poll  Poll object as defined in task-split.md (v3).
@@ -80,55 +75,35 @@ function buildPollCard(poll) {
   const { counts, total } = countVotes(poll);
   const period = periodText(poll);
 
+  const meta = metaOf(poll);
   const body = [
-    {
-      type: "TextBlock",
-      text: poll.question,
-      weight: "Bolder",
-      size: "Medium",
-      wrap: true,
-    },
+    banner(currentStyle(), { icon: meta.icon, label: isOpen ? meta.title : `${meta.title} · CLOSED`, title: poll.question, tone: isOpen ? "open" : "closed" }),
   ];
 
-  if (period) {
-    body.push({ type: "TextBlock", text: period, isSubtle: true, spacing: "None", wrap: true });
-  }
+  // Info chips: dates, close time, poll options
+  const chips = [];
+  if (period) chips.push(chip(`📅 ${period}`));
+  chips.push(isOpen ? chip(poll.closesAt ? `⏳ Closes ${formatDateTime(poll.closesAt)}` : "🟢 Open", poll.closesAt ? "Warning" : "Good") : chip("🔒 Poll closed", "Attention"));
+  if (poll.multi) chips.push(chip("☑️ Pick all that apply"));
+  if (poll.anonymous) chips.push(chip("🕶️ Anonymous"));
+  body.push({ type: "ColumnSet", columns: chips, spacing: "Small" });
+
+  body.push(...optionRows(poll, counts, total));
 
   body.push({
-    type: "TextBlock",
-    text: isOpen
-      ? poll.closesAt ? `Closes: ${formatDateTime(poll.closesAt)}` : "Open"
-      : "🔒 This poll is closed",
-    isSubtle: isOpen,
-    color: isOpen ? "Default" : "Attention",
-    spacing: "None",
-    wrap: true,
-  });
-
-  const notes = [poll.multi && "Pick all that apply", poll.anonymous && "Anonymous: names are never shown"].filter(Boolean);
-  if (notes.length) body.push({ type: "TextBlock", text: notes.join(" · "), isSubtle: true, size: "Small", spacing: "None", wrap: true });
-
-  // One row per option: label | bar | count
-  for (const opt of poll.options || []) {
-    const c = counts[opt.id] || 0;
-    body.push({
-      type: "ColumnSet",
-      spacing: "Small",
-      columns: [
-        { type: "Column", width: "stretch", items: [{ type: "TextBlock", text: opt.label, wrap: true }] },
-        { type: "Column", width: "auto", items: [{ type: "TextBlock", text: bar(c, total), fontType: "Monospace", isSubtle: true }] },
-        { type: "Column", width: "auto", items: [{ type: "TextBlock", text: String(c), weight: "Bolder" }] },
-      ],
-    });
-  }
-
-  body.push({
-    type: "TextBlock",
-    text: `${poll.multi ? "Voters" : "Total votes"}: ${total}${isOpen ? (usesChoiceSet(poll) ? " · vote again to change your answer" : " · tap again to change your vote") : ""}`,
-    isSubtle: true,
-    size: "Small",
+    type: "ColumnSet",
     separator: true,
-    wrap: true,
+    spacing: "Medium",
+    columns: [
+      { type: "Column", width: "auto", items: [{ type: "TextBlock", text: `👥 ${total} ${poll.multi ? (total === 1 ? "voter" : "voters") : total === 1 ? "vote" : "votes"}`, weight: "Bolder", size: "Small" }] },
+      {
+        type: "Column", width: "stretch",
+        items: [{
+          type: "TextBlock", horizontalAlignment: "Right", isSubtle: true, size: "Small", wrap: true,
+          text: isOpen ? (usesChoiceSet(poll) ? "Vote again to change your answer" : "Tap again to change your vote") : "Voting is closed",
+        }],
+      },
+    ],
   });
 
   const card = {
@@ -148,11 +123,11 @@ function buildPollCard(poll) {
       style: "expanded",
       choices: poll.options.map((o) => ({ title: o.label, value: o.id })),
     });
-    card.actions = [{ type: "Action.Submit", title: "Vote", data: { action: "vote", pollId: poll.pollId } }];
+    card.actions = [{ type: "Action.Submit", title: "🗳️ Vote", style: "positive", data: { action: "vote", pollId: poll.pollId } }];
   } else if (isOpen) {
-    card.actions = (poll.options || []).map((opt) => ({
+    card.actions = (poll.options || []).map((opt, i) => ({
       type: "Action.Submit",
-      title: opt.label,
+      title: `${optionIcon(poll, opt, i)} ${opt.label}`,
       data: { action: "vote", pollId: poll.pollId, optionId: opt.id },
     }));
   }

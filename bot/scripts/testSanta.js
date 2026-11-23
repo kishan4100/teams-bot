@@ -1,6 +1,7 @@
 // Secret Santa bot flow with a fake Teams API. Run: node scripts/testSanta.js
 const assert = require("assert"), os = require("os"), path = require("path"), fs = require("fs");
 process.env.POLL_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "santa-bot-"));
+process.env.BOT_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "santa-dm-"));
 const actions = require("../teamsActions");
 const santaBot = require("../santa");
 const { buildSantaCard } = require("../cards/santaCards");
@@ -50,5 +51,34 @@ const mk = (id, type = "personal") => {
   const hr2 = mk("hr"); hr2.api = { conversations: { ...api.conversations, create: async () => { throw new Error("blocked"); } } };
   await santaBot.drawSanta(hr2);
   assert.ok(/couldn't message/.test(hr2.sent[0]));
+  // Reminder for people who haven't joined (before a draw)
+  await santa.cancel(ev2.id);
+  await santaBot.startSanta(hr, { title: "Third" });
+  const ev3 = await santa.getCurrentEvent();
+  const jc = mk("p1", "groupChat"); jc.activity.value = { action: "santa_join", eventId: ev3.id }; await santaBot.handleAction(jc);
+  let reminded = null;
+  actions.getMembers = async () => [{ userId: "p1", name: "P1" }, { userId: "p2", name: "P2" }, { userId: "p3", name: "P3" }];
+  actions.sendSantaReminder = async (e, people) => { reminded = people.map((x) => x.userId); };
+  const rh = mk("hr"); await santaBot.remindSanta(rh);
+  assert.deepStrictEqual(reminded, ["p2", "p3"]);
+  assert.ok(/2 of 3/.test(rh.sent[0]));
+
+  // Known 1:1 chat is reused (no create); a stale one is re-created
+  santaBot.rememberPersonal({ from: { id: "k" }, conversation: { id: "known-k", conversationType: "personal" } });
+  santaBot.rememberPersonal({ from: { id: "g" }, conversation: { id: "grp", conversationType: "groupChat" } }); // groups ignored
+  let created = [], sent = [];
+  const api3 = { conversations: {
+    create: async ({ members }) => { created.push(members[0].id); return { id: "new-" + members[0].id }; },
+    createActivity: async (cid) => { if (cid === "known-stale") throw new Error("gone"); sent.push(cid); return { id: "x" }; },
+    updateActivity: async () => {} } };
+  const probe = mk("hr"); probe.api = api3;
+  await santaBot._dm(probe, "k", "t1", "hi");
+  assert.deepStrictEqual([created, sent], [[], ["known-k"]]);
+  await santaBot._dm(probe, "g", "t1", "hi");                 // unknown user → creates a chat
+  await santaBot._dm(probe, "g", "t1", "again");              // second time reuses it
+  assert.deepStrictEqual([created, sent.slice(1)], [["g"], ["new-g", "new-g"]]);
+  santaBot.rememberPersonal({ from: { id: "s" }, conversation: { id: "known-stale", conversationType: "personal" } });
+  await santaBot._dm(probe, "s", "t1", "hi");
+  assert.deepStrictEqual([created, sent.slice(-1)], [["g", "s"], ["new-s"]]);
   console.log("santa bot tests passed");
 })().catch((e) => { console.error(e); process.exit(1); });

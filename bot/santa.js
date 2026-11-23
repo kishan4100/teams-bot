@@ -1,6 +1,7 @@
 // Secret Santa on the bot side: join card, draw + private messages, "my santa". Storage/draw logic is in ../poll/santa.js.
 // Never send pairings to the AI model: this file has no Kompass calls on purpose.
 const actions = require("./teamsActions");
+const settings = require("../poll/settings");
 const santa = require("../poll/santa");
 const { buildSantaCard } = require("./cards/santaCards");
 const cmds = () => require("./commands").internals;
@@ -15,12 +16,9 @@ async function startSanta(context, { title, budget }) {
   await context.send("✅ Secret Santa posted in the group. When enough people have joined, ask me to draw it.");
 }
 
-// Sends one private message to a user. Needs the bot to be allowed to open a 1:1 chat with them (unverified in real Teams).
-async function dm(context, userId, tenantId, text) {
-  const api = context.api;
-  const res = await api.conversations.create({ members: [{ id: userId }], tenantId: tenantId || (context.activity.conversation || {}).tenantId });
-  await api.conversations.createActivity(res.id, { type: "message", text });
-}
+// Private message via the shared sender in teamsActions (reuses known 1:1 chats, creates one if needed).
+const dm = (context, userId, tenantId, text) =>
+  actions.sendDm(userId, text, { api: context.api, tenantId: tenantId || (context.activity.conversation || {}).tenantId });
 
 async function drawSanta(context) {
   const event = await santa.getCurrentEvent();
@@ -66,6 +64,28 @@ async function mySanta(context) {
   await context.send(to ? `🎅 You're Secret Santa for **${to.name}**.` : "You didn't join this Secret Santa.");
 }
 
+// HR: @mention group members who haven't joined yet (only while joining is open).
+async function remindSanta(context, delivery) {
+  const event = await santa.getCurrentEvent();
+  if (!event || event.status !== "joining") return context.send("There's no Secret Santa open for joining.");
+  actions.setTarget(context);
+  let members;
+  try {
+    members = await actions.getMembers();
+  } catch (err) {
+    context.log.warn(`getMembers failed: ${err.message}`);
+    return context.send("I couldn't get the member list, so I didn't send a reminder.");
+  }
+  const left = members.filter((m) => !event.participants[m.userId]);
+  if (!left.length) return context.send("Everyone in the group has joined already 🎉 No reminder sent.");
+  const how = delivery || (await settings.getDelivery());
+  const { failed } = (await actions.sendSantaReminder(event, left, how)) || { failed: [] };
+  await context.send(
+    `Reminder ${how === "dm" ? "sent privately" : "posted in the group"}. ${left.length} of ${members.length} people haven't joined: ${left.map((m) => m.name).join(", ")}.` +
+      (failed.length ? ` I couldn't message ${failed.join(", ")} privately, so I @mentioned them in the group.` : "")
+  );
+}
+
 async function santaStatus(context) {
   const event = await santa.getCurrentEvent();
   if (!event) return context.send("There's no Secret Santa right now.");
@@ -87,4 +107,4 @@ async function handleAction(context) {
   }
 }
 
-module.exports = { startSanta, drawSanta, mySanta, santaStatus, handleAction };
+module.exports = { _dm: dm, rememberPersonal: actions.rememberPersonal, startSanta, drawSanta, remindSanta, mySanta, santaStatus, handleAction };

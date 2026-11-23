@@ -18,7 +18,7 @@ assert.ok(!c.body.some((b) => b.type === "Input.ChoiceSet"));
 c = buildPollCard({ ...base, options: opts(7) });
 let cs = c.body.find((b) => b.type === "Input.ChoiceSet");
 assert.ok(cs && cs.isMultiSelect === false && cs.choices.length === 7);
-assert.deepStrictEqual(c.actions.map((a) => a.title), ["Vote"]);
+assert.deepStrictEqual(c.actions.map((a) => a.title), ["🗳️ Vote"]);
 
 // Multi choice → checkboxes; counts per option, total = voters
 c = buildPollCard({ ...base, options: opts(3), multi: true, anonymous: true,
@@ -27,8 +27,8 @@ cs = c.body.find((b) => b.type === "Input.ChoiceSet");
 assert.ok(cs.isMultiSelect);
 const txt = JSON.stringify(c);
 assert.ok(txt.includes("Pick all that apply") && txt.includes("Anonymous"));
-assert.ok(txt.includes("Voters: 2"));
-const counts = c.body.filter((b) => b.type === "ColumnSet").map((r) => r.columns[2].items[0].text);
+assert.ok(txt.includes("👥 2 voters"));
+const counts = [...txt.matchAll(/"text":"(\d+) · \d+%"/g)].map((m) => m[1]);
 assert.deepStrictEqual(counts, ["1", "0", "2"]);
 
 // Closed → no inputs, no buttons

@@ -32,8 +32,9 @@ const card = JSON.stringify(buildSummaryCard({
   totalVotes: 4, counts: { bf_lunch: 2, lunch_only: 1, none: 1 },
   voters: { bf_lunch: ["Ravi", "Asha"], lunch_only: ["Sam"], none: ["Lee"] },
 }));
-assert.ok(card.includes('Breakfast count","value":"2"'), "breakfast = bf_lunch");
-assert.ok(card.includes('Lunch count","value":"3"'), "lunch = bf_lunch + lunch_only");
+assert.ok(card.includes('"text":"2","size":"ExtraLarge"') && card.includes("Breakfast count"), "breakfast = bf_lunch");
+assert.ok(card.includes('"text":"3","size":"ExtraLarge"') && card.includes("Lunch count"), "lunch = bf_lunch + lunch_only");
+assert.ok(card.includes("Winner: Breakfast + Lunch"), "winner line");
 assert.ok(card.includes("Ravi, Asha"), "names shown");
 assert.ok(card.includes("Week starting Mon 23 Nov"), "week shown");
 
