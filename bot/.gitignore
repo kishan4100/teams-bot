@@ -19,3 +19,6 @@ node_modules/
 /devTools/
 # Bot runtime state (target chat)
 /data/
+
+# Claude chat transcripts (contain secrets; never commit)
+chat-history/
