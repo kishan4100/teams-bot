@@ -1,0 +1,6 @@
+is_hr: {{is_hr}}
+today: {{today}}
+tools (JSON): {{tools}}
+context (JSON, may be empty): {{context}}
+conversation so far (may be empty): {{conversation}}
+message: {{message}}

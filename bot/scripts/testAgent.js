@@ -1,0 +1,115 @@
+// Tests the agent's routing/permissions/validation with a fake model (no network). Run: node scripts/testAgent.js
+const assert = require("assert");
+const os = require("os"), path = require("path"), fs = require("fs");
+process.env.POLL_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "agent-test-"));
+process.env.KOMPASS_PROJECT_ID = "x";
+process.env.KOMPASS_AGENT_FLOW_ID = "y";
+process.env.HR_USER_ID = "hr1";
+const kompass = require("../kompass");
+const agent = require("../agent");
+
+let fake; // what the "model" replies next
+let seen; // last inputs sent to the model
+kompass.agent = async (inputs) => { seen = inputs; return typeof fake === "function" ? fake(inputs) : fake; };
+
+const mk = (id) => {
+  const sent = [];
+  return {
+    sent,
+    activity: { from: { id, name: id }, conversation: { id: "c1", conversationType: "personal" }, value: null },
+    log: { warn() {}, error() {}, info() {} },
+    send: async (m) => sent.push(m),
+    api: {},
+  };
+};
+const text = (m) => (typeof m === "string" ? m : JSON.stringify(m));
+
+(async () => {
+  // Catalog is per user
+  const hrNames = agent.buildCatalog(true).map((t) => t.name);
+  const userNames = agent.buildCatalog(false).map((t) => t.name);
+  assert.ok(hrNames.includes("close_poll") && hrNames.includes("set_schedule"));
+  assert.deepStrictEqual([...userNames].sort(), ["my_santa", "my_votes", "open_polls", "secret_santa_status", "send_feedback", "show_menu"]);
+  assert.ok(!userNames.some((n) => /draw|start_|close|remind|set_|summary/.test(n)));
+  assert.ok(!JSON.stringify(agent.buildCatalog(true)).includes('"run"'));
+
+  // Validation
+  const set = agent.TOOLS.find((t) => t.name === "set_schedule");
+  assert.deepStrictEqual(agent.validateArgs(set, { kind: "Friday", event: "close", day: "fri", time: "12:30", junk: 1 }).args, { kind: "friday", event: "close", day: "fri", time: "12:30" });
+  assert.ok(agent.validateArgs(set, { kind: "friday", event: "close", day: "fri", time: "12.30pm" }).error);
+  assert.ok(agent.validateArgs(set, { kind: "monthly", event: "close", day: "fri", time: "12:30" }).error);
+  assert.ok(agent.validateArgs(set, { kind: "friday" }).error);
+  assert.deepStrictEqual(agent.parseReply('```json\n{"type":"unknown"}\n```'), { type: "unknown" });
+  assert.strictEqual(agent.parseReply("not json"), null);
+
+  // HR: tool with confirm → confirmation card, nothing run yet
+  let c = mk("hr1");
+  fake = { type: "tool", name: "set_schedule", args: { kind: "friday", event: "close", day: "fri", time: "12:30" } };
+  assert.strictEqual(await agent.handleMessage(c, "push the friday cutoff to half past 12"), true);
+  assert.strictEqual(c.sent.length, 1);
+  assert.ok(text(c.sent[0]).includes("agent_confirm"));
+  assert.strictEqual(JSON.parse(seen.tools).length, hrNames.length);
+  assert.strictEqual(seen.is_hr, "true");
+
+  // Non-HR asking for an HR tool → refused by code even if the model returns it
+  c = mk("user1");
+  fake = { type: "tool", name: "close_poll", args: {} };
+  assert.strictEqual(await agent.handleMessage(c, "close the poll"), true);
+  assert.deepStrictEqual(c.sent, ["Only HR can do that."]);
+  assert.strictEqual(seen.is_hr, "false");
+  assert.deepStrictEqual(JSON.parse(seen.tools).map((t) => t.name), userNames);
+
+  // Unlisted tool
+  c = mk("hr1");
+  fake = { type: "tool", name: "draw_santa", args: {} };
+  await agent.handleMessage(c, "do santa");
+  assert.deepStrictEqual(c.sent, ["I can't do that yet."]);
+
+  // Missing arg → question, and the turn is remembered for the next call
+  c = mk("hr1");
+  fake = { type: "ask", question: "What are the options?" };
+  await agent.handleMessage(c, "make a poll about lunch");
+  assert.deepStrictEqual(c.sent, ["What are the options?"]);
+  fake = { type: "answer", text: "ok" };
+  await agent.handleMessage(mk("hr1"), "pizza, pasta");
+  assert.strictEqual(JSON.parse(seen.conversation).length, 2);
+
+  // Answer / unknown / junk / model failure
+  c = mk("user1");
+  fake = { type: "answer", text: "Lunch is dal." };
+  assert.strictEqual(await agent.handleMessage(c, "what's for lunch?"), true);
+  assert.deepStrictEqual(c.sent, ["Lunch is dal."]);
+  fake = { type: "unknown" };
+  assert.strictEqual(await agent.handleMessage(mk("user1"), "hi"), false);
+  fake = "garbage"; assert.strictEqual(await agent.handleMessage(mk("user1"), "hi"), false);
+  fake = () => { throw new Error("boom"); }; assert.strictEqual(await agent.handleMessage(mk("user1"), "hi"), false);
+
+  // Tool without confirm runs straight away (everyone tool: send_feedback)
+  c = mk("user1");
+  fake = { type: "tool", name: "send_feedback", args: { text: "loved the biryani" } };
+  await agent.handleMessage(c, "feedback loved the biryani");
+  assert.ok(c.sent.some((m) => /saved anonymously/.test(text(m))));
+  fs.rmSync(path.join(__dirname, "..", "data", "feedback.json"), { force: true }); // created by the test
+
+  // Confirm button: non-HR refused; HR with bad args refused; tampered tool name refused
+  c = mk("user1"); c.activity.value = { action: "agent_confirm", tool: "close_poll", args: {} };
+  await agent.handleAction(c);
+  assert.ok(/only HR/.test(c.sent[0]));
+  c = mk("hr1"); c.activity.value = { action: "agent_confirm", tool: "set_schedule", args: { kind: "x" } };
+  await agent.handleAction(c);
+  assert.ok(/couldn't do that/.test(c.sent[0]));
+  c = mk("hr1"); c.activity.value = { action: "agent_confirm", tool: "send_feedback", args: { text: "hi" } }; // no confirm step → not allowed via button
+  await agent.handleAction(c);
+  assert.ok(/couldn't do that/.test(c.sent[0]));
+
+  // Registry sanity: unique names, known types, every tool runs something, HR tools that change things have confirm
+  const names = agent.TOOLS.map((t) => t.name);
+  assert.strictEqual(new Set(names).size, names.length);
+  for (const t of agent.TOOLS) {
+    assert.ok(typeof t.run === "function" && ["hr", "everyone"].includes(t.who) && t.description, t.name);
+    for (const d of Object.values(t.args)) assert.ok(["string", "number", "boolean", "date", "time", "datetime", "list"].includes(d.type), t.name);
+  }
+  for (const n of ["close_poll", "remind_voters", "start_weekly_poll", "start_friday_poll", "set_schedule", "start_secret_santa", "draw_secret_santa"]) assert.ok(agent.TOOLS.find((t) => t.name === n).confirm, n + " needs confirm");
+
+  console.log("agent tests passed");
+})().catch((e) => { console.error(e); process.exit(1); });

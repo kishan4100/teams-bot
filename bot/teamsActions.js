@@ -117,6 +117,13 @@ async function postPollCard(poll) {
   pollCards.set(poll.pollId, { conversationId, activityId: res.id });
 }
 
+/** Post any Adaptive Card to the target chat. Returns { conversationId, activityId }. */
+async function postCard(card) {
+  const { conversationId, api } = requireTarget();
+  const res = await api.conversations.createActivity(conversationId, cardMessage(card));
+  return { conversationId, activityId: res.id };
+}
+
 /** Replace the posted poll card with fresh counts (same message, edited in place). */
 async function updatePollCard(poll) {
   const ref = pollCards.get(poll.pollId);
@@ -173,6 +180,7 @@ const MENTIONS_PER_MESSAGE = 20;
 function pollLabel(poll) {
   if (poll.type === "weekly_attendance" && poll.weekStart) return `this week's meal poll (week of ${formatDay(poll.weekStart)})`;
   if (poll.type === "friday_diet" && poll.date) return `the Friday lunch poll (${formatDay(poll.date)})`;
+  if (poll.type === "custom") return `the poll "${poll.question}"`;
   return "the meal poll";
 }
 
@@ -185,7 +193,7 @@ function pollLabel(poll) {
 async function sendReminder(poll, nonVoters) {
   const { conversationId, api } = requireTarget();
   const closes = poll.closesAt ? ` before ${formatDateTime(poll.closesAt)}` : "";
-  const intro = `⏰ Reminder: please vote in ${pollLabel(poll)}${closes}. Tap a button on the poll card above.`;
+  const intro = `⏰ Reminder: please vote in ${pollLabel(poll)}${closes}. Vote on the poll card above.`;
 
   if (!Array.isArray(nonVoters)) {
     await api.conversations.createActivity(conversationId, { type: "message", text: `${intro}\nIf you've already voted, thanks!` });
@@ -219,6 +227,7 @@ function hasPollCardInTarget(pollId) {
 
 module.exports = {
   postPollCard,
+  postCard,
   updatePollCard,
   postSummary,
   postMenuPreview,

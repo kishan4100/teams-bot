@@ -93,11 +93,19 @@ async function tick(bot, nowMs = Date.now()) {
       await call(bot, 'postSummary', await p.closePoll(poll.pollId));
       continue;
     }
-    const kind = poll.type === 'weekly_attendance' ? 'weekly' : 'friday';
-    const startMs = lastOccurrence(sched[kind].remind, nowMs);
-    if (closeMs - startMs >= 7 * DAY) continue; // reminder start belongs to a different cycle
     const hhmm = toLocal(nowMs).slice(11, 16);
-    if (kind === 'weekly' && (hhmm < WEEKLY_REMIND_FROM || hhmm > WEEKLY_REMIND_TO)) continue; // no weekly reminders at night
+    let startMs;
+    if (poll.type === 'custom') {
+      // Custom polls: reminders start one interval after the poll was created, same 09:00–21:00 window as weekly.
+      startMs = toMs(poll.createdAt) + sched.remindEveryMinutes * MIN;
+      if (nowMs < startMs) continue;
+      if (hhmm < WEEKLY_REMIND_FROM || hhmm > WEEKLY_REMIND_TO) continue;
+    } else {
+      const kind = poll.type === 'weekly_attendance' ? 'weekly' : 'friday';
+      startMs = lastOccurrence(sched[kind].remind, nowMs);
+      if (closeMs - startMs >= 7 * DAY) continue; // reminder start belongs to a different cycle
+      if (kind === 'weekly' && (hhmm < WEEKLY_REMIND_FROM || hhmm > WEEKLY_REMIND_TO)) continue; // no weekly reminders at night
+    }
     const minute = Math.floor(nowMs / MIN);
     // ponytail: exact-minute match; a reminder slot is skipped if the bot is down at that minute.
     if ((minute - Math.floor(startMs / MIN)) % sched.remindEveryMinutes !== 0) continue;

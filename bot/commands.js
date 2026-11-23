@@ -15,23 +15,27 @@ const kompass = require("./kompass");
 const { nowInOffice, addDays, dayOfWeek, weeklyWeekStart, fridayOnOrAfter, closesAtFor } = require("./dates");
 const { formatDay, formatDateTime } = require("./cards/pollCard");
 const { buildMenuPreviewCard, buildMenuInputCard } = require("./cards/menuCards");
+const { buildNewPollForm, buildPollPreview, buildPostedCard, buildPollChooser } = require("./cards/customPollCards");
 
 const HELP = [
   "**Meal poll bot commands** (HR only):",
   "- `start weekly poll`: post next week's attendance poll",
   "- `start friday poll`: post the Friday veg / non-veg poll",
-  "- `close poll` (or `close poll weekly` / `close poll friday`): close and post results",
+  "- `new poll`: create a poll on any topic (question, options, one or several answers, anonymous, optional close time)",
+  "- `close poll` (or `close poll weekly` / `close poll friday`): close and post results; with several open polls I'll ask which",
   "- `remind` (or `remind weekly` / `remind friday`): remind people who haven't voted (@mentions them)",
   "- `set menu`: opens a box to paste the vendor's menu → preview → Confirm to post it",
   "- `show schedule`: when polls post, remind and close",
   "- `set schedule <weekly|friday> <post|remind|close> <day> <HH:mm>`: e.g. `set schedule friday close fri 12:30`",
   "- `use this chat`: send this once **in the meal-poll group, @mentioning me** (e.g. `@Snack Overflow use this chat`). Polls, results and the menu are posted there",
   "- `feedback summary`: the main themes from the last 7 days of meal feedback",
+  "- Secret Santa (in plain English): *start a secret santa called Office Santa 2026, budget 500* posts a Join card in the group; later *draw the secret santa* draws it and privately messages everyone their person (needs 3+ people)",
   "- `help`: show this list",
   "",
   "**For everyone:**",
   "- `feedback <comment>`: anonymous meal feedback, e.g. `feedback 👍 loved the biryani`",
-  "- Or just ask in plain English: *what's for lunch on Wednesday?*, *did I vote?* (HR: *push the friday cutoff to 12:30*)",
+  "- `my santa`: who you're Secret Santa for (use it in this 1:1 chat); `santa status`: is a Secret Santa open and how many joined",
+  "- Or just ask in plain English: *what's for lunch on Wednesday?*, *did I vote?*, *which polls are open?*, *what's the menu tomorrow?* (HR: *push the friday cutoff to 12:30*, *make a poll about the team outing*, *start a secret santa*, *draw the secret santa*)",
   "",
   "Tip: after `use this chat`, run all other commands in a 1:1 chat with me; only the results go to the group.",
 ].join("\n");
@@ -128,13 +132,27 @@ async function closePollCmd(context, which) {
     return;
   }
   if (open.length > 1) {
-    await context.send(`There are ${open.length} open polls. Say \`close poll weekly\` or \`close poll friday\`.`);
+    await context.send(actions.cardMessage(buildPollChooser(open, "close")));
     return;
   }
-  const { pollId } = open[0];
+  await closeOne(context, open[0].pollId);
+}
+
+// Close one poll and post its results. Returns the closed poll, or null if it was already closed / unknown.
+async function closeOne(context, pollId) {
+  const poll = await polls.getPoll(pollId);
+  if (!poll) {
+    await context.send("That poll doesn't exist any more.");
+    return null;
+  }
+  if (poll.status === "closed") {
+    await context.send("That poll is already closed.");
+    return null;
+  }
   actions.setTarget(context);
   const summary = await polls.closePoll(pollId);
   await actions.postSummary(summary); // also flips the original card to "closed"
+  return polls.getPoll(pollId);
 }
 
 // Teams may deliver pasted multi-line text as HTML (<p>, <br>, entities). Turn it back into plain lines.
@@ -261,7 +279,7 @@ async function pickOpenPoll(context, which, verb) {
     return null;
   }
   if (open.length > 1) {
-    await context.send(`There are ${open.length} open polls. Say \`${verb} weekly\` or \`${verb} friday\`.`);
+    await context.send(actions.cardMessage(buildPollChooser(open, verb)));
     return null;
   }
   return open[0];
@@ -270,6 +288,14 @@ async function pickOpenPoll(context, which, verb) {
 async function remindCmd(context, which) {
   const poll = await pickOpenPoll(context, which, "remind");
   if (!poll) return;
+  await remindPoll(context, poll);
+}
+
+async function remindPoll(context, poll) {
+  if (poll.status !== "open") {
+    await context.send("That poll is closed, so there's nothing to remind about.");
+    return;
+  }
   actions.setTarget(context);
   let members = null;
   try {
@@ -390,6 +416,8 @@ async function aiChat(context, text) {
     await context.send(sorry);
     return;
   }
+  // General agent first (opt-in via KOMPASS_AGENT_FLOW_ID); it returns false to fall through to the Chat flow below.
+  if (kompass.agentEnabled() && (await require("./agent").handleMessage(context, text))) return;
   let out;
   try {
     out = await kompass.chat({ message: text.slice(0, 1000), is_hr: String(await isHr(context)), ...(await chatContext(context)) });
@@ -409,6 +437,106 @@ async function aiChat(context, text) {
   }
 }
 
+// ---------- Custom (any-topic) polls ----------
+async function newPollCmd(context) {
+  await context.send(actions.cardMessage(buildNewPollForm()));
+}
+
+// Card inputs → draft. Returns { draft } or { error, draft } (draft is kept so the form can be re-shown filled in).
+function parseDraft(v) {
+  const draft = {
+    question: String(v.q || "").trim(),
+    options: String(v.opts || "").split(/\r?\n/).map((o) => o.trim()).filter(Boolean),
+    multi: v.multi === "true",
+    anonymous: v.anonymous === "true",
+    closeDate: v.closeDate || "",
+    closeTime: v.closeTime || "",
+    closesAt: null,
+  };
+  if (!draft.question) return { draft, error: "Please enter a question." };
+  if (draft.options.length < 2) return { draft, error: "Please enter at least 2 options, one per line." };
+  if (draft.options.length > 10) return { draft, error: "At most 10 options, please." };
+  if (new Set(draft.options.map((o) => o.toLowerCase())).size !== draft.options.length) return { draft, error: "Two options are the same." };
+  if (draft.closeTime && !draft.closeDate) return { draft, error: "Pick a close date too (or clear the time)." };
+  if (draft.closeDate) {
+    const time = draft.closeTime || "18:00"; // date without a time → 18:00 (shown in the preview)
+    draft.closeTime = time;
+    draft.closesAt = `${draft.closeDate}T${time.slice(0, 5)}:00`;
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00$/.test(draft.closesAt)) return { draft, error: "That close date/time doesn't look right." };
+    if (draft.closesAt <= nowString()) return { draft, error: "The close time is in the past." };
+  }
+  draft.draftId = require("crypto").randomBytes(6).toString("hex");
+  return { draft };
+}
+
+// Replace the card the button was clicked on (falls back to sending a new one).
+async function replaceCard(context, cardJson) {
+  const { activity } = context;
+  const msg = actions.cardMessage(cardJson);
+  if (activity.replyToId) {
+    try {
+      await context.api.conversations.updateActivity(activity.conversation.id, activity.replyToId, msg);
+      return;
+    } catch (err) {
+      context.log.warn(`Could not update card, sending a new one: ${err.message}`);
+    }
+  }
+  await context.send(msg);
+}
+
+const postedDrafts = new Set(); // guards against a double-click on "Post" creating two polls
+
+async function handleCustomPollAction(context) {
+  if (!(await isHr(context))) {
+    await context.send("Sorry, only HR can do that.");
+    return;
+  }
+  const v = context.activity.value;
+  try {
+    if (v.action === "cpoll_cancel") {
+      await replaceCard(context, { type: "AdaptiveCard", version: "1.5", body: [{ type: "TextBlock", text: "❌ Poll cancelled. Nothing was posted." }] });
+    } else if (v.action === "cpoll_preview") {
+      const { draft, error } = parseDraft(v);
+      await replaceCard(context, error ? buildNewPollForm(draft, error) : buildPollPreview(draft));
+    } else if (v.action === "cpoll_edit") {
+      await replaceCard(context, buildNewPollForm(v.draft || {}));
+    } else if (v.action === "cpoll_post") {
+      const d = v.draft || {};
+      if (d.draftId && postedDrafts.has(d.draftId)) {
+        await context.send("This poll was already posted.");
+        return;
+      }
+      if (!actions.getTargetInfo()) {
+        await context.send("No group chat set yet. Open the group chat and send `@Snack Overflow use this chat` there first.");
+        return;
+      }
+      const from = context.activity.from || {};
+      const poll = await polls.createCustomPoll({
+        question: d.question, options: d.options, multi: d.multi, anonymous: d.anonymous, closesAt: d.closesAt || null,
+        createdBy: { userId: from.id, name: from.name || null },
+      });
+      if (d.draftId) postedDrafts.add(d.draftId);
+      actions.setTarget(context);
+      await actions.postPollCard(poll);
+      await replaceCard(context, buildPostedCard(poll));
+    } else if (v.action === "cpoll_remind") {
+      const poll = await polls.getPoll(v.pollId);
+      if (!poll) {
+        await context.send("That poll doesn't exist any more.");
+        return;
+      }
+      await remindPoll(context, poll);
+    } else if (v.action === "cpoll_close") {
+      const closed = await closeOne(context, v.pollId);
+      if (closed && v.from === "posted") await replaceCard(context, buildPostedCard(closed));
+      else if (closed) await context.send("Closed. The results are posted in the group.");
+    }
+  } catch (err) {
+    context.log.error(`Custom poll action ${v.action} failed: ${err.stack || err.message}`);
+    await context.send(`Sorry, that didn't work: ${err.message}`);
+  }
+}
+
 const COMMANDS = [
   { re: /^help$/i, hrOnly: false, run: (ctx) => ctx.send(HELP) },
   { re: /^feedback summary$/i, hrOnly: true, run: feedbackSummaryCmd },
@@ -421,6 +549,9 @@ const COMMANDS = [
     hrOnly: true,
     run: (ctx) => ctx.send("Format: `set schedule <weekly|friday> <post|remind|close> <day> <HH:mm>`, e.g. `set schedule friday close fri 12:30`"),
   },
+  { re: /^my santa$/i, hrOnly: false, run: (ctx) => require("./santa").mySanta(ctx) },
+  { re: /^santa status$/i, hrOnly: false, run: (ctx) => require("./santa").santaStatus(ctx) },
+  { re: /^new poll$/i, hrOnly: true, run: newPollCmd },
   { re: /^start weekly poll$/i, hrOnly: true, run: startWeekly },
   { re: /^start friday poll$/i, hrOnly: true, run: startFriday },
   { re: /^remind(?:\s+(\w+))?$/i, hrOnly: true, run: (ctx, m) => remindCmd(ctx, m[1] && m[1].toLowerCase()) },
@@ -465,4 +596,10 @@ async function handleCommand(context, rawText) {
   return false;
 }
 
-module.exports = { handleCommand, handleMenuAction, htmlToText, aiChat, aiMenu };
+// Pieces the agent's tools wrap (kept here so the existing commands stay the single implementation).
+const internals = {
+  isHr, chatContext, replaceCard, nowString,
+  closePollCmd, remindCmd, startWeekly, startFriday, showScheduleCmd, setScheduleCmd, feedbackCmd, feedbackSummaryCmd,
+};
+
+module.exports = { internals, handleCommand, handleMenuAction, handleCustomPollAction, parseDraft, htmlToText, aiChat, aiMenu };

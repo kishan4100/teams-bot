@@ -46,13 +46,56 @@ async function createPoll(type, { weekStart = null, weekEnd = null, date = null,
   return poll;
 }
 
+// ---------- Custom (any-topic) polls, added 2026-11-23 ----------
+// type "custom": the creator supplies question + options. multi = several answers allowed;
+// anonymous = voter names are never stored or shown (user ids are still kept, for one-vote-per-person and reminders).
+const isDateTime = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(s);
+const MAX_OPTIONS = 10;
+
+async function createCustomPoll({ question, options, multi = false, anonymous = false, closesAt = null, createdBy = null } = {}) {
+  question = String(question || '').trim();
+  if (!question) throw new Error('The poll needs a question.');
+  if (question.length > 300) throw new Error('The question is too long (max 300 characters).');
+  const labels = (Array.isArray(options) ? options : []).map((o) => String(o).trim()).filter(Boolean);
+  if (labels.length < 2) throw new Error('The poll needs at least 2 options.');
+  if (labels.length > MAX_OPTIONS) throw new Error(`At most ${MAX_OPTIONS} options, please.`);
+  if (labels.some((l) => l.length > 100)) throw new Error('Each option can be at most 100 characters.');
+  if (new Set(labels.map((l) => l.toLowerCase())).size !== labels.length) throw new Error('Two options are the same.');
+  if (closesAt !== null && !isDateTime(closesAt)) throw new Error('closesAt must be YYYY-MM-DDTHH:mm:ss');
+  const createdAt = now();
+  if (closesAt && closesAt <= createdAt) throw new Error('The close time is already in the past.');
+
+  const pollId = `custom-${createdAt.replace(/\D/g, '')}-${require('crypto').randomBytes(2).toString('hex')}`;
+  const poll = {
+    pollId, type: 'custom', question, options: labels.map((label, i) => ({ id: `o${i + 1}`, label })),
+    weekStart: null, weekEnd: null, date: null, closesAt, status: 'open', responses: {},
+    multi: !!multi, anonymous: !!anonymous, createdAt, createdBy,
+  };
+  const polls = load(POLLS_FILE);
+  polls[pollId] = poll;
+  save(POLLS_FILE, polls);
+  return poll;
+}
+
+// optionId: a string for single-choice polls; for multi-choice polls an array (or "o1,o3" string) of option ids.
 async function recordVote(pollId, userId, name, optionId) {
   const polls = load(POLLS_FILE);
   const poll = polls[pollId];
   if (!poll) throw new Error(`Unknown poll: ${pollId}`);
   if (poll.status === 'closed') return poll; // ignored; caller checks status
-  if (!poll.options.some((o) => o.id === optionId)) throw new Error(`Invalid option ${optionId} for ${pollId}`);
-  poll.responses[userId] = { name, optionId, votedAt: now() }; // revote replaces
+  const valid = (id) => poll.options.some((o) => o.id === id);
+  const voterName = poll.anonymous ? null : name;
+  if (poll.multi) {
+    const ids = [...new Set((Array.isArray(optionId) ? optionId : String(optionId || '').split(',')).map((s) => String(s).trim()).filter(Boolean))];
+    if (ids.length === 0) throw new Error('Pick at least one option.');
+    const bad = ids.find((id) => !valid(id));
+    if (bad) throw new Error(`Invalid option ${bad} for ${pollId}`);
+    poll.responses[userId] = { name: voterName, optionIds: ids, votedAt: now() }; // revote replaces
+  } else {
+    const id = Array.isArray(optionId) ? optionId[0] : optionId;
+    if (!valid(id)) throw new Error(`Invalid option ${id} for ${pollId}`);
+    poll.responses[userId] = { name: voterName, optionId: id, votedAt: now() }; // revote replaces
+  }
   save(POLLS_FILE, polls);
   return poll;
 }
@@ -68,11 +111,24 @@ async function getOpenPolls() {
 function summarize(poll) {
   const counts = {}, voters = {};
   for (const o of poll.options) { counts[o.id] = 0; voters[o.id] = []; }
-  for (const r of Object.values(poll.responses)) { counts[r.optionId]++; voters[r.optionId].push(r.name); }
-  return {
+  for (const r of Object.values(poll.responses)) {
+    for (const id of r.optionIds || [r.optionId]) {
+      if (!(id in counts)) continue;
+      counts[id]++;
+      if (!poll.anonymous) voters[id].push(r.name);
+    }
+  }
+  const summary = {
     pollId: poll.pollId, type: poll.type, question: poll.question,
     totalVotes: Object.keys(poll.responses).length, counts, voters,
   };
+  // Extra fields for custom polls (the meal-poll contract fields above are unchanged).
+  if (poll.type === 'custom') {
+    summary.options = poll.options.map(({ id, label }) => ({ id, label }));
+    summary.multi = !!poll.multi;
+    summary.anonymous = !!poll.anonymous;
+  }
+  return summary;
 }
 
 async function closePoll(pollId) {
@@ -221,6 +277,6 @@ async function setSchedule(kind, event, day, time) {
 }
 
 module.exports = {
-  createPoll, recordVote, getPoll, getOpenPolls, closePoll, getNonVoters,
+  createPoll, createCustomPoll, recordVote, getPoll, getOpenPolls, closePoll, getNonVoters,
   parseMenu, saveMenu, getMenu, setMenuWeek, getSchedule, setSchedule, TEMPLATES,
 };

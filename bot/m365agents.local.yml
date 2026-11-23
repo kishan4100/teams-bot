@@ -64,7 +64,7 @@ provision:
 deploy:
   # Run npm command
   - uses: cli/runNpmCommand
-    name: install dependencies
+    name: install dependencies 
     with:
       args: install
 

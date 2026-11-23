@@ -41,16 +41,23 @@ function periodText(poll) {
   return null;
 }
 
-// Count votes per optionId from poll.responses.
+// Count votes per option from poll.responses. total = number of voters (for multi-choice polls one voter
+// can tick several options, so the per-option counts can add up to more than total).
 function countVotes(poll) {
   const counts = {};
   for (const opt of poll.options || []) counts[opt.id] = 0;
+  let total = 0;
   for (const r of Object.values(poll.responses || {})) {
-    if (r && r.optionId in counts) counts[r.optionId] += 1;
+    if (!r) continue;
+    total += 1;
+    for (const id of r.optionIds || [r.optionId]) if (id in counts) counts[id] += 1;
   }
-  const total = Object.values(counts).reduce((a, b) => a + b, 0);
   return { counts, total };
 }
+
+// Buttons for short single-choice polls; checkboxes/radio list + a Vote button otherwise.
+const MAX_BUTTONS = 5;
+const usesChoiceSet = (poll) => !!poll.multi || (poll.options || []).length > MAX_BUTTONS;
 
 // Simple text bar; Adaptive Cards 1.5 has no progress-bar element.
 function bar(count, total, width = 10) {
@@ -98,6 +105,9 @@ function buildPollCard(poll) {
     wrap: true,
   });
 
+  const notes = [poll.multi && "Pick all that apply", poll.anonymous && "Anonymous: names are never shown"].filter(Boolean);
+  if (notes.length) body.push({ type: "TextBlock", text: notes.join(" · "), isSubtle: true, size: "Small", spacing: "None", wrap: true });
+
   // One row per option: label | bar | count
   for (const opt of poll.options || []) {
     const c = counts[opt.id] || 0;
@@ -114,7 +124,7 @@ function buildPollCard(poll) {
 
   body.push({
     type: "TextBlock",
-    text: `Total votes: ${total}${isOpen ? " · tap again to change your vote" : ""}`,
+    text: `${poll.multi ? "Voters" : "Total votes"}: ${total}${isOpen ? (usesChoiceSet(poll) ? " · vote again to change your answer" : " · tap again to change your vote") : ""}`,
     isSubtle: true,
     size: "Small",
     separator: true,
@@ -129,7 +139,17 @@ function buildPollCard(poll) {
     msteams: { width: "Full" },
   };
 
-  if (isOpen) {
+  if (isOpen && usesChoiceSet(poll)) {
+    // Click payload: { action: "vote", pollId, choices: "o1,o3" } (Teams adds the input values to `data`).
+    body.push({
+      type: "Input.ChoiceSet",
+      id: "choices",
+      isMultiSelect: !!poll.multi,
+      style: "expanded",
+      choices: poll.options.map((o) => ({ title: o.label, value: o.id })),
+    });
+    card.actions = [{ type: "Action.Submit", title: "Vote", data: { action: "vote", pollId: poll.pollId } }];
+  } else if (isOpen) {
     card.actions = (poll.options || []).map((opt) => ({
       type: "Action.Submit",
       title: opt.label,

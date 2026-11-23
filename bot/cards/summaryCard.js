@@ -31,6 +31,13 @@ function buildSummaryCard(summary) {
     { type: "TextBlock", text: "📊 Poll closed: results", weight: "Bolder", size: "Medium", wrap: true },
     { type: "TextBlock", text: summary.question, wrap: true, spacing: "None" },
   ];
+  if (summary.multi || summary.anonymous) {
+    body.push({
+      type: "TextBlock",
+      text: [summary.multi && "Several answers allowed", summary.anonymous && "Anonymous poll"].filter(Boolean).join(" · "),
+      isSubtle: true, size: "Small", spacing: "None", wrap: true,
+    });
+  }
   if (date) {
     body.push({
       type: "TextBlock",
@@ -52,8 +59,11 @@ function buildSummaryCard(summary) {
     });
   }
 
+  // Custom polls carry their own labels in summary.options; meal polls use the LABELS table.
+  const labelOf = Object.fromEntries((summary.options || []).map((o) => [o.id, o.label]));
   for (const id of Object.keys(counts)) {
     const names = voters[id] || [];
+    const nameLine = summary.anonymous ? null : names.length ? names.join(", ") : "—";
     body.push({
       type: "Container",
       separator: true,
@@ -61,16 +71,16 @@ function buildSummaryCard(summary) {
         {
           type: "ColumnSet",
           columns: [
-            { type: "Column", width: "stretch", items: [{ type: "TextBlock", text: LABELS[id] || id, weight: "Bolder", wrap: true }] },
+            { type: "Column", width: "stretch", items: [{ type: "TextBlock", text: labelOf[id] || LABELS[id] || id, weight: "Bolder", wrap: true }] },
             { type: "Column", width: "auto", items: [{ type: "TextBlock", text: String(counts[id]), weight: "Bolder" }] },
           ],
         },
-        { type: "TextBlock", text: names.length ? names.join(", ") : "—", isSubtle: true, wrap: true, spacing: "None" },
+        ...(nameLine === null ? [] : [{ type: "TextBlock", text: nameLine, isSubtle: true, wrap: true, spacing: "None" }]),
       ],
     });
   }
 
-  body.push({ type: "TextBlock", text: `Total votes: ${summary.totalVotes ?? 0}`, isSubtle: true, size: "Small", separator: true });
+  body.push({ type: "TextBlock", text: `${summary.multi ? "Voters" : "Total votes"}: ${summary.totalVotes ?? 0}`, isSubtle: true, size: "Small", separator: true });
 
   return {
     $schema: "http://adaptivecards.io/schemas/adaptive-card.json",

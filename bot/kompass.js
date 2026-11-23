@@ -13,6 +13,10 @@ const BASE = process.env.KOMPASS_URL || "https://aistudio-apigateway-v2-dev.sang
 const CHAT_FLOW = process.env.KOMPASS_CHAT_FLOW_ID || "59827c83-7624-4c11-9f53-587d63345b17";
 const EXTRACT_FLOW = process.env.KOMPASS_EXTRACT_FLOW_ID || "e7bbf123-3ae2-425e-860f-e68b60138196";
 
+// The general agent workflow (SnackOverflow_Agent). Opt-in: no default id, so the agent stays off until KOMPASS_AGENT_FLOW_ID is set.
+const AGENT_FLOW = process.env.KOMPASS_AGENT_FLOW_ID || "";
+const agentEnabled = () => !!process.env.KOMPASS_PROJECT_ID && !!(process.env.KOMPASS_AGENT_FLOW_ID || AGENT_FLOW);
+
 const enabled = () => !!process.env.KOMPASS_PROJECT_ID;
 
 // Runs a workflow and returns its output (parsed JSON). Throws on HTTP/workflow errors or timeout.
@@ -42,4 +46,6 @@ async function runFlow(flowId, inputs) {
 const chat = (inputs) => runFlow(CHAT_FLOW, inputs);
 const extract = (task, text, today) => runFlow(EXTRACT_FLOW, { task, text, today });
 
-module.exports = { enabled, runFlow, chat, extract };
+const agent = (inputs) => runFlow(process.env.KOMPASS_AGENT_FLOW_ID || AGENT_FLOW, inputs);
+
+module.exports = { enabled, agentEnabled, runFlow, chat, extract, agent };
