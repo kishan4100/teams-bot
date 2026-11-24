@@ -57,6 +57,23 @@ function countVotes(poll) {
   return { counts, total };
 }
 
+// Who voted for what, for the live card: { optionId: ["Ravi", ...] } (never for anonymous polls; the caller skips those).
+// At most 30 names per option are listed, the rest shown as "+N more", so the card stays small for big groups.
+const MAX_NAMES = 30;
+function namesByOption(poll) {
+  const names = {};
+  for (const opt of poll.options || []) names[opt.id] = [];
+  for (const r of Object.values(poll.responses || {})) {
+    if (!r) continue;
+    for (const id of r.optionIds || [r.optionId]) if (id in names) names[id].push(r.name || "Someone");
+  }
+  for (const id of Object.keys(names)) {
+    const all = names[id];
+    if (all.length > MAX_NAMES) names[id] = [...all.slice(0, MAX_NAMES), `+${all.length - MAX_NAMES} more`];
+  }
+  return names;
+}
+
 // Buttons for short single-choice polls; checkboxes/radio list + a Vote button otherwise.
 const MAX_BUTTONS = 5;
 const usesChoiceSet = (poll) => !!poll.multi || (poll.options || []).length > MAX_BUTTONS;
@@ -88,7 +105,7 @@ function buildPollCard(poll) {
   if (poll.anonymous) chips.push(chip("🕶️ Anonymous"));
   body.push({ type: "ColumnSet", columns: chips, spacing: "Small" });
 
-  body.push(...optionRows(poll, counts, total));
+  body.push(...optionRows(poll, counts, total, { names: poll.anonymous ? null : namesByOption(poll) }));
 
   body.push({
     type: "ColumnSet",
