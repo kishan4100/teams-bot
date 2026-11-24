@@ -34,13 +34,7 @@ function buildSummaryCard(summary) {
   const options = Object.keys(counts).map((id) => ({ id, label: labelOf[id] || LABELS[id] || id }));
   const poll = { type: summary.type, options };
 
-  // Winner line: the option(s) with the most votes.
-  const max = Math.max(0, ...Object.values(counts));
-  const top = options.filter((o) => max > 0 && counts[o.id] === max);
-  const winner =
-    max === 0 ? "😴 Nobody voted this time"
-      : top.length === 1 ? `👑 Winner: ${top[0].label} (${max} ${max === 1 ? "vote" : "votes"}, ${Math.round((max / (total || 1)) * 100)}%)`
-        : `🤝 It's a tie: ${top.map((o) => o.label).join(" and ")} (${max} each)`;
+  const sectionLabel = (text) => ({ type: "TextBlock", text: text.toUpperCase(), size: "Small", weight: "Bolder", isSubtle: true, spacing: "Medium" });
 
   const meta = metaOf(poll);
   const body = [
@@ -53,24 +47,26 @@ function buildSummaryCard(summary) {
   if (summary.anonymous) chips.push(chip("🕶️ Anonymous poll"));
   if (chips.length) body.push({ type: "ColumnSet", columns: chips, spacing: "Small" });
 
-  body.push({ type: "TextBlock", text: winner, weight: "Bolder", size: "Medium", wrap: true, spacing: "Medium" });
+  if (total === 0) body.push({ type: "TextBlock", text: "😴 Nobody voted this time", weight: "Bolder", size: "Medium", wrap: true, spacing: "Medium" });
 
   if (isWeekly) {
     // Stat tiles for HR's kitchen numbers: breakfast = bf_lunch, lunch = bf_lunch + lunch_only.
-    const tile = (icon, label, n) => ({
+    const tile = (label, n) => ({
       type: "Column", width: "stretch", style: "emphasis",
       items: [
         { type: "TextBlock", text: String(n), size: "ExtraLarge", weight: "Bolder", horizontalAlignment: "Center", spacing: "None" },
-        { type: "TextBlock", text: `${icon} ${label}`, isSubtle: true, size: "Small", horizontalAlignment: "Center", spacing: "None" },
+        { type: "TextBlock", text: label, isSubtle: true, size: "Small", horizontalAlignment: "Center", spacing: "None" },
       ],
     });
+    body.push(sectionLabel("Headcount"));
     body.push({
-      type: "ColumnSet", spacing: "Medium",
-      columns: [tile("🍳", "Breakfast count", counts.bf_lunch || 0), tile("🍛", "Lunch count", (counts.bf_lunch || 0) + (counts.lunch_only || 0))],
+      type: "ColumnSet", spacing: "Small",
+      columns: [tile("Breakfast count", counts.bf_lunch || 0), tile("Lunch count", (counts.bf_lunch || 0) + (counts.lunch_only || 0))],
     });
   }
 
-  body.push(...optionRows(poll, counts, total, { names: summary.anonymous ? null : voters, winnerIcon: "🏆" }));
+  body.push(sectionLabel("Responses"));
+  body.push(...optionRows(poll, counts, total, { names: summary.anonymous ? null : voters }));
 
   body.push({ type: "TextBlock", text: `👥 ${total} ${summary.multi ? (total === 1 ? "voter" : "voters") : total === 1 ? "vote" : "votes"}`, weight: "Bolder", size: "Small", separator: true, spacing: "Medium" });
 

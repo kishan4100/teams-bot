@@ -28,8 +28,18 @@ assert.ok(cs.isMultiSelect);
 const txt = JSON.stringify(c);
 assert.ok(txt.includes("Pick all that apply") && txt.includes("Anonymous"));
 assert.ok(txt.includes("👥 2 voters"));
-const counts = [...txt.matchAll(/"text":"(\d+) · \d+%"/g)].map((m) => m[1]);
-assert.deepStrictEqual(counts, ["1", "0", "2"]);
+// Each option row ends with a bold count and a quiet, fixed-width percentage column.
+const rows = [];
+(function walk(n) {
+  if (Array.isArray(n)) return n.forEach(walk);
+  if (!n || typeof n !== "object") return;
+  if (n.type === "ColumnSet" && (n.columns || []).some((x) => x.width === "48px")) {
+    const cols = n.columns;
+    rows.push([cols[cols.length - 2].items[0].text, cols[cols.length - 1].items[0].text]);
+  }
+  Object.values(n).forEach(walk);
+})(c);
+assert.deepStrictEqual(rows, [["1", "50%"], ["0", "0%"], ["2", "100%"]]);
 
 // Closed → no inputs, no buttons
 c = buildPollCard({ ...base, options: opts(3), multi: true, status: "closed" });

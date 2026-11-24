@@ -34,7 +34,7 @@ const card = JSON.stringify(buildSummaryCard({
 }));
 assert.ok(card.includes('"text":"2","size":"ExtraLarge"') && card.includes("Breakfast count"), "breakfast = bf_lunch");
 assert.ok(card.includes('"text":"3","size":"ExtraLarge"') && card.includes("Lunch count"), "lunch = bf_lunch + lunch_only");
-assert.ok(card.includes("Winner: Breakfast + Lunch"), "winner line");
+assert.ok(!/Winner|tie|🏆|👑/.test(card), "no winner line or trophy on the results card");
 assert.ok(card.includes("Ravi, Asha"), "names shown");
 assert.ok(card.includes("Week starting Mon 23 Nov"), "week shown");
 

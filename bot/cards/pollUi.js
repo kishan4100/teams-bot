@@ -21,12 +21,13 @@ function chip(text, color = "Default") {
 }
 
 // ---------- Bar styles (pick one with POLL_CARD_STYLE in bot/.env; read on every call) ----------
-//   blocks : 🟩🟩🟩⬜⬜  emoji squares, vivid on any theme (default)
-//   text   : ▰▰▰▱▱     coloured text bar
+//   clean  : no bar and no per-option emoji: label, count and % per row, thin separators (default)
+//   blocks : 🟩🟩🟩⬜⬜  emoji squares, vivid on any theme
+//   text   : ▰▰▰▱▱     coloured text bar in the Teams theme's accent colour
 //   tiles  : no bar, bold % with a tile per option
 //   bars   : the first version (container-colour slabs)
-const STYLES = ["blocks", "text", "tiles", "bars"];
-const currentStyle = () => (STYLES.includes(process.env.POLL_CARD_STYLE) ? process.env.POLL_CARD_STYLE : "blocks");
+const STYLES = ["clean", "blocks", "text", "tiles", "bars"];
+const currentStyle = () => (STYLES.includes(process.env.POLL_CARD_STYLE) ? process.env.POLL_CARD_STYLE : "clean");
 
 // Banner at the top of a card. Every style except "bars" uses the neutral grey banner with a coloured label.
 function banner(style, { icon, label, title, tone }) {
@@ -78,19 +79,25 @@ function barRow(count, total, leading) {
  * One tile per option: icon + label, "count · pct%", bar, optional names.
  * names: { optionId: ["Ravi", ...] } (results card only; omit for the live poll card).
  */
-function optionRows(poll, counts, total, { names = null, winnerIcon = "🔥", style = currentStyle() } = {}) {
+function optionRows(poll, counts, total, { names = null, winnerIcon = "🔥", highlight = false, style = currentStyle() } = {}) {
   const max = Math.max(0, ...Object.values(counts));
   return (poll.options || []).map((opt, i) => {
     const c = counts[opt.id] || 0;
-    const leading = max > 0 && c === max;
+    const leading = highlight && max > 0 && c === max;
     const pct = total ? Math.round((c / total) * 100) : 0;
+    const right = style === "clean"
+      ? [
+          { type: "Column", width: "auto", verticalContentAlignment: "Center", items: [{ type: "TextBlock", text: String(c), weight: "Bolder" }] },
+          { type: "Column", width: "48px", verticalContentAlignment: "Center", items: [{ type: "TextBlock", text: `${pct}%`, isSubtle: true, horizontalAlignment: "Right", wrap: false }] },
+        ]
+      : [{ type: "Column", width: "auto", verticalContentAlignment: "Center", items: [{ type: "TextBlock", text: `${c} · ${pct}%`, weight: "Bolder", color: leading ? "Good" : "Default" }] }];
     const items = [
       {
         type: "ColumnSet",
         columns: [
-          { type: "Column", width: "auto", verticalContentAlignment: "Center", items: [{ type: "TextBlock", text: optionIcon(poll, opt, i), size: "Large" }] },
+          ...(style === "clean" ? [] : [{ type: "Column", width: "auto", verticalContentAlignment: "Center", items: [{ type: "TextBlock", text: optionIcon(poll, opt, i), size: "Large" }] }]),
           { type: "Column", width: "stretch", verticalContentAlignment: "Center", items: [{ type: "TextBlock", text: `${opt.label}${leading ? ` ${winnerIcon}` : ""}`, weight: "Bolder", wrap: true }] },
-          { type: "Column", width: "auto", verticalContentAlignment: "Center", items: [{ type: "TextBlock", text: `${c} · ${pct}%`, weight: "Bolder", color: leading ? "Good" : "Default" }] },
+          ...right,
         ],
       },
     ];
@@ -98,11 +105,11 @@ function optionRows(poll, counts, total, { names = null, winnerIcon = "🔥", st
     if (barEl) items.push(barEl);
     if (names) {
       const list = names[opt.id] || [];
-      if (list.length) items.push({ type: "TextBlock", text: `👤 ${list.join(", ")}`, isSubtle: true, size: "Small", wrap: true, spacing: "Small" });
+      if (list.length) items.push({ type: "TextBlock", text: style === "clean" ? list.join(", ") : `👤 ${list.join(", ")}`, isSubtle: true, size: "Small", wrap: true, spacing: "Small" });
     }
-    return style === "tiles"
-      ? { type: "Container", style: "emphasis", spacing: "Small", items }
-      : { type: "Container", spacing: "Medium", items };
+    if (style === "tiles") return { type: "Container", style: "emphasis", spacing: "Small", items };
+    if (style === "clean") return { type: "Container", separator: i > 0, spacing: i > 0 ? "Medium" : "Small", items };
+    return { type: "Container", spacing: "Medium", items };
   });
 }
 
