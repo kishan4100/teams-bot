@@ -1,7 +1,7 @@
 {
     "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.30/MicrosoftTeams.schema.json",
     "manifestVersion": "1.30",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "id": "${{TEAMS_APP_ID}}",
     "developer": {
         "name": "Snack Overflow hackathon team",
@@ -36,17 +36,136 @@
             "supportsTargetedMessages": false,
             "commandLists": [
                 {
-                  "scopes": ["personal", "team", "groupChat"],
-                  "triggers": ["mention"],
-                  "commands": [
-                      { "title": "help", "description": "Show the commands." },
-                      { "title": "use this chat", "description": "HR: post polls, results and the menu in this chat." },
-                      { "title": "start weekly poll", "description": "HR: post next week's attendance poll." },
-                      { "title": "start friday poll", "description": "HR: post the Friday veg / non-veg poll." },
-                      { "title": "remind", "description": "HR: remind people who haven't voted." },
-                      { "title": "close poll", "description": "HR: close the poll and post results." },
-                      { "title": "set menu", "description": "HR: paste the vendor's menu and preview it." }
-                  ]
+                    "scopes": [
+                        "personal"
+                    ],
+                    "commands": [
+                        {
+                            "title": "Help",
+                            "description": "Show everything I can do.",
+                            "type": "prompt",
+                            "prompt": "help"
+                        },
+                        {
+                            "title": "Menu this week",
+                            "description": "See this week's breakfast and lunch menu.",
+                            "type": "prompt",
+                            "prompt": "what's the menu this week?"
+                        },
+                        {
+                            "title": "Did I vote?",
+                            "description": "Check what you voted this week.",
+                            "type": "prompt",
+                            "prompt": "did I vote this week?"
+                        },
+                        {
+                            "title": "Give feedback",
+                            "description": "Send anonymous meal feedback. Edit the text, then send.",
+                            "type": "prompt",
+                            "prompt": "feedback 👍 loved the biryani"
+                        },
+                        {
+                            "title": "My Secret Santa",
+                            "description": "Find out who you're Secret Santa for.",
+                            "type": "prompt",
+                            "prompt": "my santa"
+                        },
+                        {
+                            "title": "Set menu",
+                            "description": "HR: paste the week's menu and preview it before posting.",
+                            "type": "prompt",
+                            "prompt": "set menu"
+                        },
+                        {
+                            "title": "Start weekly poll",
+                            "description": "HR: post next week's attendance poll in the group.",
+                            "type": "prompt",
+                            "prompt": "start the weekly poll"
+                        },
+                        {
+                            "title": "Remind non-voters",
+                            "description": "HR: remind the people who haven't voted yet.",
+                            "type": "prompt",
+                            "prompt": "send a reminder"
+                        },
+                        {
+                            "title": "Close poll",
+                            "description": "HR: close the weekly poll and post the results.",
+                            "type": "prompt",
+                            "prompt": "close the weekly poll"
+                        },
+                        {
+                            "title": "Make a poll",
+                            "description": "HR: create any poll from one sentence. Edit the text, then send.",
+                            "type": "prompt",
+                            "prompt": "make a poll: where should we go for the year-end outing? bowling, go-karting or a movie. closes friday 5pm"
+                        },
+                        {
+                            "title": "Start Secret Santa",
+                            "description": "HR: open a Secret Santa sign-up. Edit the name and budget, then send.",
+                            "type": "prompt",
+                            "prompt": "start a secret santa called Office Santa 2026, budget 500"
+                        },
+                        {
+                            "title": "Draw Secret Santa",
+                            "description": "HR: draw the names and tell everyone privately.",
+                            "type": "prompt",
+                            "prompt": "draw the secret santa"
+                        }
+                    ]
+                },
+                {
+                    "scopes": [
+                        "team",
+                        "groupChat"
+                    ],
+                    "triggers": [
+                        "mention"
+                    ],
+                    "commands": [
+                        {
+                            "title": "Help",
+                            "description": "Show everything I can do.",
+                            "type": "prompt",
+                            "prompt": "help"
+                        },
+                        {
+                            "title": "Menu this week",
+                            "description": "See this week's breakfast and lunch menu.",
+                            "type": "prompt",
+                            "prompt": "what's the menu this week?"
+                        },
+                        {
+                            "title": "Did I vote?",
+                            "description": "Check what you voted this week.",
+                            "type": "prompt",
+                            "prompt": "did I vote this week?"
+                        },
+                        {
+                            "title": "Open polls",
+                            "description": "See which polls are open and how many have voted.",
+                            "type": "prompt",
+                            "prompt": "which polls are open?"
+                        },
+                        {
+                            "title": "Give feedback",
+                            "description": "Send anonymous meal feedback. Edit the text, then send.",
+                            "type": "prompt",
+                            "prompt": "feedback 👍 loved the biryani"
+                        },
+                        {
+                            "title": "Secret Santa status",
+                            "description": "Is a Secret Santa open, and how many have joined?",
+                            "type": "prompt",
+                            "prompt": "santa status"
+                        },
+                        {
+                            "title": "Use this chat",
+                            "description": "HR: post polls, results and the menu in this chat.",
+                            "type": "prompt",
+                            "prompt": "use this chat"
+                        }
+                    ]
                 }
             ]
         }
