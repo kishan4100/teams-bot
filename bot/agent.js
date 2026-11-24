@@ -279,6 +279,39 @@ function alertsCard(all) {
 // "at 18:30 on mon, tue, every week" / "once on 2026-11-25 at 18:30"
 const when = (a) => (a.date ? `once on ${a.date} at ${a.time}` : `at ${a.time} on ${(a.days || []).join(", ")}, every week`);
 
+// One example sentence per tool, used for "what can you do?" and the "I didn't understand" reply (kept here so it stays in sync).
+const EXAMPLES = {
+  // order matters: the first few are what a greeting shows. HR first, then things everyone can do.
+  new_poll: "make a poll about the team outing: Fri, Sat, Sun",
+  schedule_announcement: "every weekday at 6:30 pm remind everyone to switch off the AC",
+  remind_voters: "remind the people who haven't voted (add *privately* for 1:1)",
+  close_poll: "close the poll",
+  start_secret_santa: "start a secret santa called Office Santa, budget 500",
+  show_menu: "what's the menu tomorrow?",
+  my_votes: "did I vote?",
+  open_polls: "which polls are open?",
+  send_feedback: "feedback the biryani was great",
+  my_santa: "my santa",
+  secret_santa_status: "secret santa status",
+  list_announcements: "list alerts (you can delete them from the card)",
+  cancel_announcement: "delete the second alert",
+  reopen_poll: "reopen the friday poll",
+  start_weekly_poll: "start the weekly poll",
+  start_friday_poll: "start the friday poll",
+  show_schedule: "show the poll schedule",
+  set_schedule: "push the friday cutoff to 12:30",
+  set_reminder_delivery: "send reminders privately from now on",
+  draw_secret_santa: "draw the secret santa",
+  remind_secret_santa: "remind people to join the secret santa",
+  feedback_summary: "summarise this week's meal feedback",
+};
+// Example sentences for what this user can do right now (HR gets the extra HR ones), in EXAMPLES order; n = how many (0 = all).
+function examplesFor(isHr, n = 0) {
+  const ok = new Set(TOOLS.filter((t) => allowed(t, isHr)).map((t) => t.name));
+  const all = Object.keys(EXAMPLES).filter((name) => ok.has(name)).map((name) => EXAMPLES[name]);
+  return n ? all.slice(0, n) : all;
+}
+
 const byName = (name) => TOOLS.find((t) => t.name === name);
 const allowed = (tool, isHr) => tool.who === "everyone" || isHr;
 
@@ -349,12 +382,40 @@ function parseReply(out) {
   return out && typeof out === "object" && typeof out.type === "string" ? out : null;
 }
 
+// ---------- Actions taken (sent to the model as `recent_actions`, so "undo that" / "same for Friday" make sense) ----------
+// Per user, last few actions with outcome. Saved to bot/data/agent-actions.json so it survives a restart; entries older than
+// 48 h are dropped. Holds only what that user asked the bot to do (tool name + their own args), never other people's data.
+const fs = require("fs");
+const path = require("path");
+const ACTIONS_FILE = path.join(process.env.BOT_DATA_DIR || path.join(__dirname, "data"), "agent-actions.json");
+const MAX_ACTIONS = 8, ACTIONS_TTL_MS = 48 * 3600 * 1000;
+let actionLog = null;
+const loadActions = () => (actionLog ||= (() => { try { return JSON.parse(fs.readFileSync(ACTIONS_FILE, "utf8")); } catch { return {}; } })());
+
+function shortArgs(args) {
+  return Object.fromEntries(Object.entries(args || {}).map(([k, v]) => [k, typeof v === "string" ? v.slice(0, 120) : Array.isArray(v) ? v.slice(0, 10) : v]));
+}
+// status: "done" | "failed: <reason>" | "cancelled by user" (done = the tool ran without an error; a tool may still have
+// replied "can't find that", which is why the wording is "ran")
+function logAction(userId, toolName, args, status) {
+  const log = loadActions();
+  const now = Date.now(), office = require("./dates").nowInOffice();
+  const list = (log[userId] || []).filter((a) => now - a.ts < ACTIONS_TTL_MS);
+  list.push({ ts: now, at: `${office.date} ${office.time.slice(0, 5)}`, tool: toolName, args: shortArgs(args), status });
+  log[userId] = list.slice(-MAX_ACTIONS);
+  try { fs.mkdirSync(path.dirname(ACTIONS_FILE), { recursive: true }); fs.writeFileSync(ACTIONS_FILE, JSON.stringify(log, null, 2)); } catch { /* not critical */ }
+}
+const recentActions = (userId) => (loadActions()[userId] || []).filter((a) => Date.now() - a.ts < ACTIONS_TTL_MS).map(({ at, tool, args, status }) => ({ at, tool, args, status }));
+
 // ---------- Running a tool (shared by the first message and the confirm button) ----------
 async function execute(context, tool, args) {
+  const userId = context.activity.from.id;
   try {
     await tool.run(context, args);
+    logAction(userId, tool.name, args, "done");
   } catch (err) {
     context.log.error(`Agent tool ${tool.name} failed: ${err.stack || err.message}`);
+    logAction(userId, tool.name, args, `failed: ${String(err.message).slice(0, 100)}`);
     await context.send(`Sorry, that didn't work: ${err.message}`);
   }
 }
@@ -365,7 +426,7 @@ function confirmCard(tool, args) {
     body: [{ type: "TextBlock", text: `❓ ${tool.confirm(args)}`, wrap: true, weight: "Bolder" }],
     actions: [
       { type: "Action.Submit", title: "✅ Yes", data: { action: "agent_confirm", tool: tool.name, args } },
-      { type: "Action.Submit", title: "Cancel", data: { action: "agent_cancel" } },
+      { type: "Action.Submit", title: "Cancel", data: { action: "agent_cancel", tool: tool.name, args } },
     ],
   };
 }
@@ -386,7 +447,7 @@ async function handleMessage(context, text) {
       is_hr: String(isHr),
       today: ctx.today,
       tools: JSON.stringify(catalog),
-      context: JSON.stringify({ menu: ctx.menu, my_votes: ctx.my_votes, open_polls: open }),
+      context: JSON.stringify({ menu: ctx.menu, my_votes: ctx.my_votes, open_polls: open, recent_actions: recentActions(userId) }),
       conversation: JSON.stringify(recall(userId)),
     }));
   } catch (err) {
@@ -421,7 +482,8 @@ async function handleMessage(context, text) {
       remember(userId, { role: "user", text }, { role: "bot", text: v.error });
       return true;
     }
-    forget(userId); // the request is complete
+    // The request is complete: keep it in the short conversation too, with what the bot did, so follow-ups can refer to it.
+    remember(userId, { role: "user", text }, { role: "bot", text: `[${tool.confirm ? "asked HR to confirm" : "ran"} ${tool.name} ${JSON.stringify(shortArgs(v.args))}]` });
     if (tool.confirm) await context.send(actions.cardMessage(confirmCard(tool, v.args)));
     else await execute(context, tool, v.args);
     return true;
@@ -438,6 +500,8 @@ async function handleAction(context) {
     return;
   }
   if (v.action === "agent_cancel") {
+    const t = byName(v.tool);
+    if (t) logAction(context.activity.from.id, t.name, validateArgs(t, v.args).args || {}, "cancelled by user");
     await cmds().replaceCard(context, { type: "AdaptiveCard", version: "1.5", body: [{ type: "TextBlock", text: "❌ Cancelled. Nothing was done." }] });
     return;
   }
@@ -461,4 +525,4 @@ async function handleAction(context) {
   await execute(context, tool, checked.args);
 }
 
-module.exports = { TOOLS, buildCatalog, validateArgs, parseReply, handleMessage, handleAction };
+module.exports = { examplesFor, EXAMPLES, recentActions, TOOLS, buildCatalog, validateArgs, parseReply, handleMessage, handleAction };

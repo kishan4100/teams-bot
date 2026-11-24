@@ -2,6 +2,7 @@
 const assert = require("assert");
 const os = require("os"), path = require("path"), fs = require("fs");
 process.env.POLL_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "agent-test-"));
+process.env.BOT_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bot-"));
 process.env.KOMPASS_PROJECT_ID = "x";
 process.env.KOMPASS_AGENT_FLOW_ID = "y";
 process.env.HR_USER_ID = "hr1";
@@ -72,7 +73,8 @@ const text = (m) => (typeof m === "string" ? m : JSON.stringify(m));
   assert.deepStrictEqual(c.sent, ["What are the options?"]);
   fake = { type: "answer", text: "ok" };
   await agent.handleMessage(mk("hr1"), "pizza, pasta");
-  assert.strictEqual(JSON.parse(seen.conversation).length, 2);
+  const convo = JSON.parse(seen.conversation); // earlier turns (incl. what was done before) + this ask/answer
+  assert.deepStrictEqual(convo.slice(-2).map((t) => t.text), ["make a poll about lunch", "What are the options?"]);
 
   // Answer / unknown / junk / model failure
   c = mk("user1");
@@ -141,6 +143,27 @@ const text = (m) => (typeof m === "string" ? m : JSON.stringify(m));
   await agent.handleAction(again); // already deleted: no crash
   await announce.remove(a2.id);
   c = mk("hr1"); await agent.handleMessage(c, "show my alerts"); assert.ok(text(c.sent[0]).includes("Scheduled alerts (0)"));
+
+  // Actions taken are remembered per user and sent to the model next time (recent_actions) + kept in the conversation
+  c = mk("memo1"); fake = { type: "tool", name: "send_feedback", args: { text: "great biryani" } };
+  await agent.handleMessage(c, "feedback great biryani");
+  fs.rmSync(path.join(__dirname, "..", "data", "feedback.json"), { force: true });
+  fake = { type: "answer", text: "ok" };
+  await agent.handleMessage(mk("memo1"), "do that again");
+  const sentCtx = JSON.parse(seen.context);
+  assert.strictEqual(sentCtx.recent_actions.length, 1);
+  assert.deepStrictEqual([sentCtx.recent_actions[0].tool, sentCtx.recent_actions[0].status, sentCtx.recent_actions[0].args.text], ["send_feedback", "done", "great biryani"]);
+  assert.ok(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(sentCtx.recent_actions[0].at));
+  assert.ok(JSON.parse(seen.conversation).some((t) => t.role === "bot" && t.text.includes("ran send_feedback")));
+  await agent.handleMessage(mk("someone-else"), "hi");
+  assert.deepStrictEqual(JSON.parse(seen.context).recent_actions, []); // other users never see it
+  // cancelled and failed are recorded too
+  const cx = mk("hr1"); cx.activity.value = { action: "agent_cancel", tool: "close_poll", args: {} }; await agent.handleAction(cx);
+  assert.ok(agent.recentActions("hr1").some((a) => a.tool === "close_poll" && a.status === "cancelled by user"));
+  for (let i = 0; i < 12; i++) { const y = mk("memo2"); fake = { type: "tool", name: "send_feedback", args: { text: "n" + i } }; await agent.handleMessage(y, "fb"); }
+  fs.rmSync(path.join(__dirname, "..", "data", "feedback.json"), { force: true });
+  assert.strictEqual(agent.recentActions("memo2").length, 8); // keeps the last 8
+  assert.ok(fs.existsSync(path.join(process.env.BOT_DATA_DIR, "agent-actions.json"))); // saved to disk
 
   // Registry sanity: unique names, known types, every tool runs something, HR tools that change things have confirm
   const names = agent.TOOLS.map((t) => t.name);

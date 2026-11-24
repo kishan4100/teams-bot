@@ -130,3 +130,11 @@ The bot calls two workflows on Kompass, DotKonnekt's AI platform (dev, tenant `d
 - Feedback is stored anonymously (date + text only) in `bot/data/feedback.json`.
 - Only the asking user's own vote and the saved menus go to the AI, never other people's names or votes.
 - Cost per call is shown in Kompass Traces (about $0.008 per chat call in testing).
+
+## 14. Agent remembers actions taken, 2026-11-24
+
+Each message to the agent now carries `recent_actions` (inside `context`): the user's last 8 actions in the last 48 h as `{at, tool, args, status}` with status `done`, `failed: …` or `cancelled by user`. Saved per user in `bot/data/agent-actions.json` (gitignored), so it survives a restart. The short conversation also keeps what the bot just did (`[ran set_schedule {...}]`) instead of being cleared, and `today` now includes the current time (`2026-11-24 12:35 (Tuesday, Asia/Kolkata)`). Enables "do the same for the weekly poll" and "what did you just do?". "done" means the tool ran without an error. No prompt change was needed. There is no edit/undo tool, so "make it 7 pm instead" creates a new alert (delete the old one from `list alerts`).
+
+## 15. Small talk and friendlier fallbacks, 2026-11-24
+
+`bot/smalltalk.js`: greetings (hi/hello/good morning…), how are you, thanks/ok/great, bye, "who are you", emoji-only messages and "what can you do?" are answered in code before the AI (instant, free, works if Kompass is down). It only matches when the whole message is small talk, so "hi, close the poll" still reaches the agent. "What can you do?" and the greeting show example sentences for that person's role (HR sees the HR ones); the examples live in `EXAMPLES` in `bot/agent.js`, one per tool (a test fails if a tool has none). The "I didn't understand" reply now shows 3 examples instead of just "type help". Tests: `node bot/scripts/testSmallTalk.js`.

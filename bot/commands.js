@@ -448,7 +448,7 @@ async function feedbackSummaryCmd(context) {
 // ---------- Plain-English messages (Kompass Chat workflow) ----------
 // Sends the user's own votes and this/next week's menu as context. Never sends other people's names or votes.
 async function chatContext(context) {
-  const { date } = nowInOffice();
+  const { date, time } = nowInOffice(); // server clock, office time zone (Asia/Kolkata)
   const monday = addDays(date, -((dayOfWeek(date) + 6) % 7));
   const menus = (await Promise.all([monday, addDays(monday, 7)].map((d) => polls.getMenu(d))))
     .filter(Boolean)
@@ -463,7 +463,8 @@ async function chatContext(context) {
   });
 
   return {
-    today: `${date} (${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][dayOfWeek(date)]})`,
+    // Date, current time and weekday from the bot's own clock, so "in 30 minutes" / "tomorrow" / "this Friday" resolve correctly.
+    today: `${date} ${time.slice(0, 5)} (${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][dayOfWeek(date)]}, Asia/Kolkata)`,
     menu: menus.length ? JSON.stringify(menus) : "",
     my_votes: votes.join("\n"),
   };
@@ -471,7 +472,16 @@ async function chatContext(context) {
 
 // Fallback for anything that isn't an exact command. Returns nothing; always replies.
 async function aiChat(context, text) {
-  const sorry = "Sorry, I didn't understand that. Type `help` to see what I can do.";
+  // Greetings, thanks, "what can you do?": answered in code first (instant, works without the AI).
+  const hr = await isHr(context);
+  const { examplesFor } = require("./agent");
+  const small = require("./smalltalk").reply(text, (context.activity.from || {}).name, hr, examplesFor);
+  if (small) {
+    await context.send(small);
+    return;
+  }
+  // Nothing matched: say so kindly and show a few things that would work for this person.
+  const sorry = `Hmm, I didn't quite get that. 🤔 Try something like:\n${examplesFor(hr, 3).map((e) => `- ${e}`).join("\n")}\n\nSay *what can you do?* for the full list, or \`help\`.`;
   if (!text || !kompass.enabled()) {
     await context.send(sorry);
     return;
