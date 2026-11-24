@@ -165,6 +165,23 @@ const text = (m) => (typeof m === "string" ? m : JSON.stringify(m));
   assert.strictEqual(agent.recentActions("memo2").length, 8); // keeps the last 8
   assert.ok(fs.existsSync(path.join(process.env.BOT_DATA_DIR, "agent-actions.json"))); // saved to disk
 
+  // "did I vote?" covers any-topic polls too: single answer, several answers, not voted, anonymous
+  const msg = async (id, tool, args) => { const x = mk(id); fake = { type: "tool", name: tool, args }; await agent.handleMessage(x, "x"); return x.sent.map(text).join(" | "); };
+  const polls = require("../../poll/poll");
+  const p1 = await polls.createCustomPoll({ question: "Where should we go for the team outing?", options: ["Beach", "Hills", "City"] });
+  const p2 = await polls.createCustomPoll({ question: "Which snacks?", options: ["Samosa", "Cake", "Fruit"], multi: true, anonymous: true });
+  const p3 = await polls.createCustomPoll({ question: "Pick a day", options: ["Fri", "Sat"] });
+  await polls.recordVote(p1.pollId, "voter1", "Voter One", "o2");
+  await polls.recordVote(p2.pollId, "voter1", "Voter One", "o1,o3");
+  const mv = await msg("voter1", "my_votes", {});
+  assert.ok(mv.includes('Poll "Where should we go for the team outing?" (open): Hills'), mv);
+  assert.ok(mv.includes("Samosa, Fruit"), mv);                       // several answers, anonymous poll: own choice still shown
+  assert.ok(mv.includes('"Pick a day" (open): not voted yet'), mv);
+  assert.ok(!(await msg("voter2", "my_votes", {})).includes("Hills")); // someone else's votes are never shown
+  const ctxVotes = (await require("../commands").internals.chatContext(mk("voter1"))).my_votes;
+  assert.ok(ctxVotes.includes("Hills") && ctxVotes.includes("Samosa, Fruit")); // and the model gets them in its context too
+  await polls.closePoll(p1.pollId); await polls.closePoll(p2.pollId); await polls.closePoll(p3.pollId);
+
   // Registry sanity: unique names, known types, every tool runs something, HR tools that change things have confirm
   const names = agent.TOOLS.map((t) => t.name);
   assert.strictEqual(new Set(names).size, names.length);

@@ -454,12 +454,21 @@ async function chatContext(context) {
     .filter(Boolean)
     .map((m) => ({ weekStart: m.weekStart, days: m.days.map(({ day, date: d, breakfast, lunch }) => ({ day, date: d, breakfast, lunch })) }));
 
-  const ids = [`weekly_attendance-${monday}`, `weekly_attendance-${addDays(monday, 7)}`, `friday_diet-${addDays(monday, 4)}`];
   const userId = context.activity.from.id;
-  const votes = (await Promise.all(ids.map((id) => polls.getPoll(id)))).filter(Boolean).map((p) => {
+  // The user's own choice in a poll, as text. Handles single and several answers (custom polls can allow several).
+  const choiceOf = (p) => {
     const r = p.responses[userId];
-    const choice = r ? p.options.find((o) => o.id === r.optionId).label : "not voted yet";
-    return `${p.type === "friday_diet" ? `Friday lunch poll for ${p.date}` : `Weekly poll for week of ${p.weekStart}`} (${p.status}): ${choice}`;
+    if (!r) return "not voted yet";
+    const ids = r.optionIds || [r.optionId];
+    const labels = ids.map((id) => (p.options.find((o) => o.id === id) || {}).label).filter(Boolean);
+    return labels.length ? labels.join(", ") : "voted";
+  };
+  const ids = [`weekly_attendance-${monday}`, `weekly_attendance-${addDays(monday, 7)}`, `friday_diet-${addDays(monday, 4)}`];
+  const meal = (await Promise.all(ids.map((id) => polls.getPoll(id)))).filter(Boolean);
+  const custom = (await polls.getOpenPolls()).filter((p) => p.type === "custom"); // any-topic polls that are open now
+  const votes = [...meal, ...custom].map((p) => {
+    const title = p.type === "custom" ? `Poll "${p.question}"` : p.type === "friday_diet" ? `Friday lunch poll for ${p.date}` : `Weekly poll for week of ${p.weekStart}`;
+    return `${title} (${p.status}): ${choiceOf(p)}`;
   });
 
   return {

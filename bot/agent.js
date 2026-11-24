@@ -200,7 +200,7 @@ const TOOLS = [
     args: {},
     run: async (context) => {
       const { my_votes } = await cmds().chatContext(context);
-      await context.send(my_votes || "I don't see any polls for this week yet.");
+      await context.send(my_votes ? `Here's where you stand:\n\n${my_votes.split("\n").map((l) => `- ${l}`).join("\n")}` : "I don't see any open polls for you right now.");
     },
   },
   {
