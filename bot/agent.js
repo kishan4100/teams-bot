@@ -371,7 +371,6 @@ function remember(userId, ...turns) {
   const prior = recall(userId);
   memory.set(userId, { at: Date.now(), turns: [...prior, ...turns].slice(-MAX_TURNS) });
 }
-const forget = (userId) => memory.delete(userId);
 
 // ---------- Model output ----------
 function parseReply(out) {
@@ -491,6 +490,8 @@ async function handleMessage(context, text) {
   return false; // "unknown" or anything unexpected
 }
 
+const recentConfirms = new Set();
+
 // Buttons on confirmation cards: agent_confirm / agent_cancel. Permission and args are checked again here
 // because card payloads come from the client.
 async function handleAction(context) {
@@ -514,6 +515,13 @@ async function handleAction(context) {
     }
     await cmds().replaceCard(context, alertsCard(await announce.list()));
     return;
+  }
+  if (v.action === "agent_confirm") {
+    // A fast double-click sends the same confirmation twice: run it once. Keyed by the card (or, without one, by user + tool + args).
+    const key = `${context.activity.from.id}|${(context.activity.conversation || {}).id}|${context.activity.replyToId || v.tool + JSON.stringify(v.args)}`;
+    if (recentConfirms.has(key)) return;
+    recentConfirms.add(key);
+    setTimeout(() => recentConfirms.delete(key), 60 * 1000).unref();
   }
   const tool = v.action === "agent_confirm" && byName(v.tool);
   const checked = tool && tool.confirm ? validateArgs(tool, v.args) : null;

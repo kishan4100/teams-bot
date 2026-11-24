@@ -1,5 +1,8 @@
 require("./proxy");
 const app = require("./app");
+
+// Node 20 stops the process on an unhandled promise rejection. A bot should log it and keep serving everyone else.
+process.on("unhandledRejection", (reason) => console.error("[unhandled rejection]", reason && reason.stack ? reason.stack : reason));
 const actions = require("./teamsActions");
 const { startScheduler } = require("../poll/scheduler");
 

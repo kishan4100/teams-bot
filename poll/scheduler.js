@@ -154,8 +154,14 @@ function startScheduler(bot) {
   const demo = process.env.POLL_DEMO === '1';
   const stepMs = (Number(process.env.POLL_DEMO_STEP_SECONDS) || 60) * 1000;
   const state = { step: 0, polls: [] };
-  const run = () => (demo ? demoStep(bot, state, stepMs) : tick(bot))
-    .catch((e) => console.error('[scheduler] error:', e)); // never let the timer die
+  let busy = false; // a slow Teams call must not let a second check start on top of the first
+  const run = () => {
+    if (busy) return Promise.resolve();
+    busy = true;
+    return (demo ? demoStep(bot, state, stepMs) : tick(bot))
+      .catch((e) => console.error('[scheduler] error:', e)) // never let the timer die
+      .finally(() => { busy = false; });
+  };
   console.log(`[scheduler] started (${demo ? `demo, step ${stepMs / 1000}s` : 'normal, Asia/Kolkata'})`);
   run();
   const id = setInterval(run, demo ? stepMs : 30000);

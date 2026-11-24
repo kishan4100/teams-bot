@@ -182,6 +182,12 @@ const text = (m) => (typeof m === "string" ? m : JSON.stringify(m));
   assert.ok(ctxVotes.includes("Hills") && ctxVotes.includes("Samosa, Fruit")); // and the model gets them in its context too
   await polls.closePoll(p1.pollId); await polls.closePoll(p2.pollId); await polls.closePoll(p3.pollId);
 
+  // Double-clicking Yes runs the action once
+  const dbl = () => { const x = mk("hr1"); x.activity.value = { action: "agent_confirm", tool: "schedule_announcement", args: { text: "Once only", time: "18:30", days: ["mon"] } }; x.activity.replyToId = "card-dbl"; return x; };
+  const before = (await require("../../poll/announce").list()).length;
+  await Promise.all([agent.handleAction(dbl()), agent.handleAction(dbl())]);
+  assert.strictEqual((await require("../../poll/announce").list()).length, before + 1, "double-click created two alerts");
+
   // Registry sanity: unique names, known types, every tool runs something, HR tools that change things have confirm
   const names = agent.TOOLS.map((t) => t.name);
   assert.strictEqual(new Set(names).size, names.length);
